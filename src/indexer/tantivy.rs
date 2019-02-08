@@ -172,7 +172,6 @@ impl Indexer {
         it.chain(cur.into_iter().flatten())
     }
     pub fn index_mails<'a>(&mut self, full: bool) {
-        warn!("Starting.");
         let (tx, rx) = mpsc::channel();
         //let v: Vec<MailEntry> = self.source.list_new().map(|r| r.unwrap()).collect();
 
@@ -181,6 +180,7 @@ impl Indexer {
         let t = thread::spawn(move || {
             mails.into_par_iter().for_each_with(tx, |tx, msg| {
                 if let Ok(mut unparsed_msg) = msg {
+                    println!("x");
                     let date = unparsed_msg.received().unwrap_or(0);
                     let id = unparsed_msg.id().clone().to_string();
                     let msg = unparsed_msg.parsed().expect("Unable to unwrap parsed msg");
@@ -201,6 +201,7 @@ impl Indexer {
                             }
                         }
                     }
+                    println!("y");
                     tx.send(Message {
                         body,
                         from,
@@ -216,6 +217,7 @@ impl Indexer {
             });
         });
         while let Ok(msg) = rx.recv() {
+            println!("z");
             let mut document = Document::new();
             let email = &self.index.email;
             document.add_text(email.subject, msg.subject.as_str());
