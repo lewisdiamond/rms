@@ -5,7 +5,6 @@ authors = ["Lewis Diamond <lewis@jogogo.co>"]
 edition = "2018"
 
 [dependencies]
-mailparse = "0.6.4"
 maildir = "0.1.2"
 rayon = "1.0.3"
 tantivy = "0.8.1"
@@ -15,3 +14,6 @@ structopt = "0.2.14"
 shellexpand = "1.0"
 log = "0.4"
 pretty_env_logger = "0.3"
+pbr = "1.0.1"
+num_cpus = "1.9.0"
+sys-info = "0.5.6"

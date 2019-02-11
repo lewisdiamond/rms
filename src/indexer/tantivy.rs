@@ -1,4 +1,6 @@
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
+use pbr::MultiBar;
+use std::cmp;
 use std::fs;
 use std::sync::mpsc;
 use std::thread;
@@ -13,6 +15,8 @@ use maildir::Maildir;
 use maildir::{MailEntries, MailEntry};
 use rayon::prelude::*;
 use std::path::PathBuf;
+use std::time::Duration;
+const BYTES_IN_MB: usize = 1024 * 1024;
 
 struct Message {
     body: String,
@@ -36,14 +40,14 @@ struct EmailSchema {
 
 pub struct Index {
     email: EmailSchema,
-    path: PathBuf,
     index: tantivy::Index,
 }
 
 pub struct Indexer {
     index: Index,
-    index_writer: tantivy::IndexWriter,
     source: Maildir,
+    threads: Option<usize>,
+    mem_per_thread: Option<usize>,
 }
 
 pub struct Searcher {
@@ -51,9 +55,10 @@ pub struct Searcher {
 }
 
 pub struct IndexerBuilder {
-    heap_size_mb: usize,
     dst: PathBuf,
     src: PathBuf,
+    threads: Option<usize>,
+    mem_per_thread: Option<usize>,
 }
 
 impl Default for EmailSchema {
@@ -118,7 +123,7 @@ impl Index {
         } else {
             Index::open_or_create_index(path.clone(), email.schema.clone())
         };
-        Index { email, path, index }
+        Index { email, index }
     }
 }
 
@@ -127,32 +132,30 @@ impl IndexerBuilder {
         IndexerBuilder {
             src,
             dst,
-            heap_size_mb: 3000,
+            threads: None,
+            mem_per_thread: None,
         }
     }
 
-    pub fn heap_size_mb(mut self, size: usize) -> IndexerBuilder {
-        self.heap_size_mb = size;
+    pub fn threads(&mut self, num: usize) -> &IndexerBuilder {
+        self.threads = Some(num);
+        self
+    }
+
+    pub fn mem_per_thread(&mut self, num: usize) -> &IndexerBuilder {
+        self.mem_per_thread = Some(num);
         self
     }
 
     pub fn build(&self) -> Indexer {
-        let email = EmailSchema::new();
         let index = Index::new(self.dst.clone());
         let source = Maildir::from(self.src.clone());
-        println!("{}, {}", source.count_new(), source.count_cur());
 
-        let index_writer = index.index.writer(self.heap_size_mb * 1024 * 1024);
-        match index_writer {
-            Ok(index_writer) => Indexer {
-                index,
-                source,
-                index_writer,
-            },
-            Err(e) => {
-                error!("Can't open the index. {}", e);
-                ::std::process::exit(1);
-            }
+        Indexer {
+            index,
+            source,
+            threads: self.threads,
+            mem_per_thread: self.mem_per_thread,
         }
     }
 }
@@ -171,53 +174,129 @@ impl Indexer {
         };
         it.chain(cur.into_iter().flatten())
     }
+
+    fn get_index_writer(&self, num_emails: usize) -> tantivy::IndexWriter {
+        let num_cpu = match self.threads {
+            Some(threads) => threads,
+            None => cmp::min(
+                (num_cpus::get() as f32 / 1.5).floor() as usize,
+                cmp::max(
+                    1,
+                    (0.0818598 * (num_emails as f32).powf(0.31154938)) as usize,
+                ),
+            ),
+        };
+        let mem_per_thread = match self.mem_per_thread {
+            Some(mem) => mem * BYTES_IN_MB,
+            None => {
+                (if let Ok(mem_info) = sys_info::mem_info() {
+                    cmp::min(
+                        cmp::min(
+                            mem_info.avail as usize * 1024 / (num_cpu + 1),
+                            cmp::max(
+                                (0.41268337 * (num_emails as f32).powf(0.67270258)) as usize
+                                    * BYTES_IN_MB,
+                                200 * BYTES_IN_MB,
+                            ),
+                        ),
+                        2000 * BYTES_IN_MB,
+                    )
+                } else {
+                    400 * BYTES_IN_MB
+                }) as usize
+            }
+        };
+        info!(
+            "For your information, we're using {} threads with {}mb memory per thread",
+            num_cpu,
+            mem_per_thread / BYTES_IN_MB
+        );
+        debug!(
+            "meminfo {:?}, num_cpus {:?}",
+            sys_info::mem_info(),
+            num_cpus::get()
+        );
+        match self
+            .index
+            .index
+            .writer_with_num_threads(num_cpu, mem_per_thread * num_cpu)
+        {
+            Ok(index_writer) => index_writer,
+
+            Err(e) => {
+                error!("Can't open the index. {}", e);
+                ::std::process::exit(1);
+            }
+        }
+    }
     pub fn index_mails<'a>(&mut self, full: bool) {
         let (tx, rx) = mpsc::channel();
-        //let v: Vec<MailEntry> = self.source.list_new().map(|r| r.unwrap()).collect();
-
         let mails: Vec<Result<MailEntry, _>> = self.mail_iterator(full).collect();
+        let count = mails.len();
+        let mut index_writer = self.get_index_writer(count);
+        let mut mb = MultiBar::new();
+        mb.println(&format!("Indexing {} emails", count));
+        let mut index_bar = mb.create_bar(count as u64);
+        index_bar.message("Indexed ");
+        index_bar.set_max_refresh_rate(Some(Duration::from_millis(100)));
+
+        let progress_thread = thread::spawn(move || {
+            mb.listen();
+        });
 
         let t = thread::spawn(move || {
             mails.into_par_iter().for_each_with(tx, |tx, msg| {
                 if let Ok(mut unparsed_msg) = msg {
-                    println!("x");
                     let date = unparsed_msg.received().unwrap_or(0);
                     let id = unparsed_msg.id().clone().to_string();
-                    let msg = unparsed_msg.parsed().expect("Unable to unwrap parsed msg");
-                    let body = msg.get_body().unwrap_or(String::from(""));
-                    let headers = msg.headers;
-                    let mut subject: String = "".to_string();
-                    let mut from: String = "".to_string();
-                    let mut recipients: Vec<String> = vec![];
-                    for h in headers {
-                        if let Ok(s) = h.get_key() {
-                            match s.as_ref() {
-                                "Subject" => subject = h.get_value().unwrap_or("".to_string()),
-                                "From" => from = h.get_value().unwrap_or("".to_string()),
-                                "To" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                                "cc" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                                "bcc" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                                _ => {}
+                    match unparsed_msg.parsed() {
+                        Ok(msg) => {
+                            let body = msg.get_body().unwrap_or(String::from(""));
+                            let headers = msg.headers;
+                            let mut subject: String = "".to_string();
+                            let mut from: String = "".to_string();
+                            let mut recipients: Vec<String> = vec![];
+                            for h in headers {
+                                if let Ok(s) = h.get_key() {
+                                    match s.as_ref() {
+                                        "Subject" => {
+                                            subject = h.get_value().unwrap_or("".to_string())
+                                        }
+                                        "From" => from = h.get_value().unwrap_or("".to_string()),
+                                        "To" => {
+                                            recipients.push(h.get_value().unwrap_or("".to_string()))
+                                        }
+                                        "cc" => {
+                                            recipients.push(h.get_value().unwrap_or("".to_string()))
+                                        }
+                                        "bcc" => {
+                                            recipients.push(h.get_value().unwrap_or("".to_string()))
+                                        }
+                                        _ => {}
+                                    }
+                                }
                             }
+                            tx.send(Message {
+                                body,
+                                from,
+                                subject,
+                                recipients,
+                                date: date as u64,
+                                id,
+                            })
+                            .expect("Could not send to channel?");
+                        }
+                        Err(err) => {
+                            error!("A message could not be parsed: {} ... {}", id, err);
                         }
                     }
-                    println!("y");
-                    tx.send(Message {
-                        body,
-                        from,
-                        subject,
-                        recipients,
-                        date: date as u64,
-                        id,
-                    })
-                    .expect("Could not send to channel?");
                 } else {
                     error!("Failed to get message");
                 }
             });
         });
+
         while let Ok(msg) = rx.recv() {
-            println!("z");
             let mut document = Document::new();
             let email = &self.index.email;
             document.add_text(email.subject, msg.subject.as_str());
@@ -226,12 +305,15 @@ impl Indexer {
             document.add_text(email.recipients, msg.recipients.join(", ").as_str());
             document.add_u64(email.date, msg.date);
             document.add_text(email.id, msg.id.as_str());
-            self.index_writer.add_document(document);
+            let progress = index_writer.add_document(document);
+            index_bar.set(progress);
         }
-        t.join().unwrap();
-        self.index_writer
-            .commit()
-            .expect("Can't commit for some reason");
+        let progress = index_writer.commit().expect("Can't commit for some reason");
+        index_bar.finish_println("Done!");
+        t.join().expect("Unable to join threads for some reason");
+        progress_thread
+            .join()
+            .expect("Unable to join progress bar thread for some reason");
     }
 }
 

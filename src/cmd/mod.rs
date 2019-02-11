@@ -14,7 +14,7 @@ fn expand_path(input: &OsStr) -> PathBuf {
 
 #[derive(Debug, StructOpt)]
 #[structopt(
-    name = "Rusty Mailbox System",
+    name = "Rust Mail System",
     version = "0.0.1",
     author = "Lewis Diamond <rms@lewisdiamond.com>",
     about = "Index your emails like a champ!",
@@ -56,6 +56,12 @@ pub enum Command {
 
         #[structopt(short, long)]
         full: bool,
+
+        #[structopt(short, long)]
+        threads: Option<usize>,
+
+        #[structopt(short, long)]
+        mem_per_thread: Option<usize>,
     },
     #[structopt(name = "search", rename_all = "kebab-case")]
     Search {
@@ -81,6 +87,9 @@ pub enum Command {
 
         term: i64,
     },
+
+    #[structopt(name = "test", rename_all = "kebab-case")]
+    Test {},
 }
 
 pub fn opts() -> Opt {
