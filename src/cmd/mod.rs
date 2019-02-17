@@ -1,6 +1,13 @@
 use std::ffi::OsStr;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::{error, fmt};
 use structopt::StructOpt;
+
+pub struct Identifier {}
+fn as_identifier(input: &str) -> Identifier {
+    Identifier {}
+}
 
 fn expand_path(input: &OsStr) -> PathBuf {
     let input_str = input
@@ -10,6 +17,46 @@ fn expand_path(input: &OsStr) -> PathBuf {
         .expect(format!("Unable to expand {}", input_str).as_str())
         .into_owned();
     return PathBuf::from(expanded);
+}
+
+#[derive(Debug)]
+pub enum OutputType {
+    Short,
+    Full,
+}
+
+#[derive(Debug)]
+pub enum OutputTypeError {
+    UnknownTypeError,
+}
+
+impl fmt::Display for OutputTypeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Could not figure out output format")
+    }
+}
+
+// This is important for other errors to wrap this one.
+impl std::error::Error for OutputTypeError {
+    fn description(&self) -> &str {
+        "invalid first item to double"
+    }
+
+    fn cause(&self) -> Option<&error::Error> {
+        // Generic error, underlying cause isn't tracked.
+        None
+    }
+}
+
+impl FromStr for OutputType {
+    type Err = OutputTypeError;
+    fn from_str(input: &str) -> Result<OutputType, Self::Err> {
+        match input.to_lowercase().as_str() {
+            "short" => Ok(OutputType::Short),
+            "full" => Ok(OutputType::Full),
+            _ => Err(OutputTypeError::UnknownTypeError),
+        }
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -30,6 +77,14 @@ pub struct Opt {
     )]
     pub config: PathBuf,
 
+    #[structopt(
+        parse(from_os_str = "expand_path"),
+        short,
+        long,
+        env = "RMS_INDEX_DIR_PATH"
+    )]
+    pub index_dir_path: PathBuf,
+
     #[structopt(subcommand)]
     pub cmd: Command,
 }
@@ -46,13 +101,6 @@ pub enum Command {
             env = "RMS_MAILDIR_PATH"
         )]
         maildir_path: Vec<PathBuf>,
-        #[structopt(
-            parse(from_os_str = "expand_path"),
-            short,
-            long,
-            env = "RMS_INDEX_DIR_PATH"
-        )]
-        index_dir_path: PathBuf,
 
         #[structopt(short, long)]
         full: bool,
@@ -60,32 +108,26 @@ pub enum Command {
         #[structopt(short, long)]
         threads: Option<usize>,
 
-        #[structopt(short, long)]
+        #[structopt(short = "M", long)]
         mem_per_thread: Option<usize>,
     },
     #[structopt(name = "search", rename_all = "kebab-case")]
     Search {
-        #[structopt(
-            parse(from_os_str = "expand_path"),
-            short,
-            long,
-            env = "RMS_INDEX_DIR_PATH"
-        )]
-        index_dir_path: PathBuf,
-
         term: String,
+
+        #[structopt(short, long, default_value = "3")]
+        delimiter: u8,
+
+        #[structopt(short, long, default_value = "short")]
+        output: OutputType,
     },
     #[structopt(name = "date", rename_all = "kebab-case")]
-    Date {
-        #[structopt(
-            parse(from_os_str = "expand_path"),
-            short,
-            long,
-            env = "RMS_INDEX_DIR_PATH"
-        )]
-        index_dir_path: PathBuf,
+    Date { term: i64 },
 
-        term: i64,
+    #[structopt(rename_all = "kebab-case")]
+    Get {
+        #[structopt(parse(try_from_str = "as_identifier"))]
+        id: Identifier,
     },
 
     #[structopt(name = "test", rename_all = "kebab-case")]

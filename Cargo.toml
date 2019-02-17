@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 maildir = "0.1.2"
+mailparse = "0.6.5"
 rayon = "1.0.3"
 tantivy = "0.8.1"
 tempdir = "0.3.7"

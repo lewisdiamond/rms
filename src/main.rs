@@ -9,8 +9,9 @@ extern crate sys_info;
 extern crate tantivy;
 extern crate tempdir;
 mod cmd;
-mod indexer;
-use cmd::Command;
+pub mod indexer;
+pub mod message;
+use cmd::{Command, OutputType};
 use indexer::tantivy::{IndexerBuilder, Searcher};
 use log::{info, trace};
 
@@ -18,11 +19,11 @@ fn main() {
     pretty_env_logger::init();
     let opt = cmd::opts();
     trace!("Using config file at {:?}", opt.config); //, index.maildir_path);
+    let index_dir_path = opt.index_dir_path;
 
     match opt.cmd {
         Command::Index {
             maildir_path,
-            index_dir_path,
             full,
             threads,
             mem_per_thread,
@@ -42,17 +43,24 @@ fn main() {
             indexer.index_mails(full);
         }
         Command::Search {
-            index_dir_path,
             term,
+            output,
+            delimiter,
         } => {
             let searcher = Searcher::new(index_dir_path);
-            let results = searcher.search_index(term.as_str());
-            println!("{:?}", results);
+            let results = searcher.fuzzy(term.as_str());
+            match output {
+                OutputType::Short => {
+                    for r in results {
+                        println!("{:?} | {}", r.doc_address, r.subject);
+                    }
+                }
+                OutputType::Full => {
+                    println!("{:?}", results);
+                }
+            }
         }
-        Command::Date {
-            index_dir_path,
-            term,
-        } => {
+        Command::Date { term } => {
             let searcher = Searcher::new(index_dir_path);
             let results = searcher.by_date();
             println!("{:?}", results);
@@ -61,6 +69,13 @@ fn main() {
         Command::Test {} => {
             let num_cpu = num_cpus::get();
             println!("Num cpus: {}", num_cpu);
+        }
+
+        Command::Get { id } => {
+            let searcher = Searcher::new(index_dir_path);
+            let doc = searcher.get_doc(id);
+
+            println!("{:?}", doc);
         }
     }
 

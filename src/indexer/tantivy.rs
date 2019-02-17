@@ -10,21 +10,108 @@ use tantivy::collector::{Count, TopDocs};
 use tantivy::directory::MmapDirectory;
 use tantivy::query::{FuzzyTermQuery, QueryParser, RangeQuery};
 use tantivy::schema::*;
+use tantivy::DocAddress;
 
+use crate::message::Message;
 use maildir::Maildir;
 use maildir::{MailEntries, MailEntry};
 use rayon::prelude::*;
+use std::fmt;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::string::ToString;
 use std::time::Duration;
 const BYTES_IN_MB: usize = 1024 * 1024;
 
-struct Message {
-    body: String,
-    subject: String,
-    from: String,
-    recipients: Vec<String>,
-    date: u64,
-    id: String,
+type TantivyMessage = Message<DocAddress>;
+impl TantivyMessage {
+    fn from(
+        doc: Document,
+        doc_address: Option<DocAddress>,
+        schema: &EmailSchema,
+    ) -> TantivyMessage {
+        TantivyMessage {
+            id: String::from(
+                doc.get_first(schema.id)
+                    .expect("Message without ID")
+                    .text()
+                    .expect("Message with non-text ID"),
+            ),
+            subject: String::from(
+                doc.get_first(schema.subject)
+                    .expect("Message without subject")
+                    .text()
+                    .expect("Message with non-text subject"),
+            ),
+            body: String::from(
+                doc.get_first(schema.body)
+                    .expect("Message without body")
+                    .text()
+                    .expect("Message with non-text body"),
+            ),
+            from: String::from(
+                doc.get_first(schema.from)
+                    .expect("Message without from")
+                    .text()
+                    .expect("Message with non-text from"),
+            ),
+            recipients: vec![doc
+                .get_first(schema.recipients)
+                .expect("Message without recipients")
+                .text()
+                .expect("Message with non-text recipients")
+                .split(",")
+                .map(|s| String::from(s))
+                .collect()],
+            date: doc
+                .get_first(schema.date)
+                .map_or(0, |v: &tantivy::schema::Value| v.u64_value()),
+            reference: doc_address,
+        }
+    }
+}
+
+impl DocAddress {
+    fn to_doc_address(self) -> tantivy::DocAddress {
+        return tantivy::DocAddress(self.0, self.1);
+    }
+}
+
+impl fmt::Display for DocAddress {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.0, self.1)
+    }
+}
+
+#[derive(Debug)]
+pub struct DocAddressError {
+    msg: String,
+}
+impl ToString for DocAddressError {
+    fn to_string(&self) -> String {
+        self.msg.clone()
+    }
+}
+impl DocAddressError {
+    fn to_str(self) -> String {
+        self.msg
+    }
+}
+impl FromStr for DocAddress {
+    type Err = DocAddressError;
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        let data: Vec<&str> = input.trim_matches(&['(', ')'] as &[_]).split(",").collect();
+        let msg = "Not a valid DocAddress";
+        match data.len() {
+            2 => Ok(DocAddress(
+                data[0].parse::<u32>().expect(msg),
+                data[1].parse::<u32>().expect(msg),
+            )),
+            _ => Err(DocAddressError {
+                msg: String::from("Could not parse input DocAddress"),
+            }),
+        }
+    }
 }
 
 struct EmailSchema {
@@ -330,7 +417,16 @@ impl Searcher {
         let numdocs = searcher.search(&docs, &Count).unwrap();
         println!("Found {} ", numdocs);
     }
-    pub fn search_index(&self, term: &str) {
+    pub fn get_doc(&self, da: DocAddress) -> Option<Message<DocAddress>> {
+        let address = da.to_doc_address();
+        let searcher = self.index.index.searcher();
+        let doc = searcher.doc(address);
+        match doc {
+            Ok(d) => Some(TantivyMessage::from(d, Some(address), &self.index.email).msg()),
+            Err(_) => None,
+        }
+    }
+    pub fn fuzzy(&self, term: &str) -> Vec<Message<DocAddress>> {
         println!("Searching for {}", term);
         let searcher = self.index.index.searcher();
         let term = Term::from_field_text(self.index.email.subject, term);
@@ -347,9 +443,11 @@ impl Searcher {
         //searcher.search(&*query, &mut top_collector).unwrap();
         //let doc_addresses = top_collector.docs();
         //for doc_address in doc_addresses {
+        let mut ret = Vec::new();
         for doc in top_docs {
             let retrieved_doc = searcher.doc(doc.1).unwrap();
-            println!("{}", self.index.email.schema.to_json(&retrieved_doc));
+            ret.push(TantivyMessage::from(retrieved_doc, Some(doc.1), &self.index.email).msg());
         }
+        ret
     }
 }
