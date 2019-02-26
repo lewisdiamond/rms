@@ -1,4 +1,5 @@
-use log::{debug, error};
+use log::error;
+use rms::readmail::extract_body;
 mod readmail_cmd;
 use mailparse::*;
 use readmail_cmd::source;
@@ -28,30 +29,14 @@ fn main() {
                         }
                     }
 
-                    let mut body: Option<String> = None;
-                    for s in &msg.subparts {
-                        let mime = s.ctype.mimetype.as_str();
-                        match mime {
-                            "text/plain" => {
-                                if let Ok(s) = s.get_body() {
-                                    body = Some(s)
-                                }
-                            }
-                            _ => debug!("unknown mime {}", mime),
-                        }
-                    }
-
-                    if body.is_none() {
-                        body = Some(msg.get_body().unwrap_or(String::from("")));
-                    }
-
                     println!("From: {}", from);
                     println!("To: {}", recipients.join(", "));
                     println!("Subject: {}", subject);
+                    let body = extract_body(msg, true);
                     match body {
-                        Some(b) => println!("Body {}", b),
-                        None => (),
-                    }
+                        Some(b) => println!("\n\n{}", b.value),
+                        None => {}
+                    };
                 } else {
                     error!("Failed to parse the file");
                     ::std::process::exit(1);

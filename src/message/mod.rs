@@ -1,11 +1,16 @@
-#[derive(Debug)]
+use chrono::{Local, TimeZone};
+use std::convert::AsRef;
+use std::string::ToString;
+
+#[derive(Debug, Clone)]
 pub struct Message<T> {
-    pub id: Option<String>,
+    pub id: Option<T>,
     pub body: String,
     pub subject: String,
     pub from: String,
     pub recipients: Vec<String>,
     pub date: u64,
+    pub original: Option<String>,
 }
 
 pub struct MessageBuilder {
@@ -15,6 +20,39 @@ pub struct MessageBuilder {
     recipients: Option<Vec<String>>,
     date: Option<u64>,
     id: Option<String>,
+}
+
+impl<T> ToString for Message<T> {
+    fn to_string(&self) -> String {
+        let dt = Local.timestamp(self.date as i64, 0);
+        let dstr = dt.format("%a %b %e %T %Y").to_string();
+        format!("{}: [{}] {}", dstr, self.from, self.subject.as_str())
+    }
+}
+impl<T> AsRef<str> for Message<T> {
+    fn as_ref(&self) -> &str {
+        let dt = Local.timestamp(self.date as i64, 0);
+        let dstr = dt.format("%a %b %e %T %Y").to_string();
+        "aa" //self.to_string().as_ref()
+    }
+}
+
+impl<T> Message<T> {
+    pub fn to_long_string(&self) -> String {
+        format!(
+            r#"
+        From: {}
+        to/cc/bcc: {}
+        Subject: {}
+
+        {} 
+        "#,
+            self.from,
+            self.recipients.join(","),
+            self.subject,
+            self.body.replace('\r', "")
+        )
+    }
 }
 
 impl MessageBuilder {
@@ -46,12 +84,13 @@ impl MessageBuilder {
         let msg = "Missing field for Message";
 
         Message {
-            id: self.id.expect(msg),
+            id: Some(self.id.expect(msg)),
             body: self.body.expect(msg),
             from: self.from.expect(msg),
             subject: self.subject.expect(msg),
             recipients: self.recipients.expect(msg),
             date: self.date.expect(msg),
+            original: None,
         }
     }
 }

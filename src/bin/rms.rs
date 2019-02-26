@@ -1,23 +1,11 @@
-extern crate maildir;
-extern crate num_cpus;
-extern crate pbr;
-extern crate pretty_env_logger;
-extern crate rayon;
-extern crate shellexpand;
-extern crate structopt;
-extern crate sys_info;
-extern crate tantivy;
-extern crate tempdir;
-mod cmd;
-pub mod indexer;
-pub mod message;
-use cmd::{Command, OutputType};
-use indexer::tantivy::{IndexerBuilder, Searcher};
 use log::{info, trace};
+use rms::cmd::{opts, Command, OutputType};
+use rms::indexer::tantivy::{IndexerBuilder, Searcher};
+use rms::terminal;
 
 fn main() {
     pretty_env_logger::init();
-    let opt = cmd::opts();
+    let opt = opts();
     trace!("Using config file at {:?}", opt.config); //, index.maildir_path);
     let index_dir_path = opt.index_dir_path;
 
@@ -46,13 +34,14 @@ fn main() {
             term,
             output,
             delimiter,
+            num,
         } => {
             let searcher = Searcher::new(index_dir_path);
-            let results = searcher.fuzzy(term.as_str());
+            let results = searcher.fuzzy(term.as_str(), num);
             match output {
                 OutputType::Short => {
                     for r in results {
-                        println!("{:?} | {}", r.doc_address, r.subject);
+                        println!("{:?} | {}", r.id, r.subject);
                     }
                 }
                 OutputType::Full => {
@@ -76,6 +65,16 @@ fn main() {
             let doc = searcher.get_doc(id);
 
             println!("{:?}", doc);
+        }
+        Command::Interactive {} => {
+            terminal::start(index_dir_path).unwrap();
+        }
+        Command::Latest { num } => {
+            let searcher = Searcher::new(index_dir_path);
+            let stuff = searcher.latest(num, None);
+            for s in stuff {
+                println!("{}", s.date);
+            }
         }
     }
 

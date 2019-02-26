@@ -1,42 +1,48 @@
-use log::{debug, error, info, warn};
+use crate::readmail;
+use html2text::from_read;
+
+use log::{debug, error, info};
 use pbr::MultiBar;
 use std::cmp;
 use std::fs;
+use std::panic;
 use std::sync::mpsc;
 use std::thread;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use tantivy;
 use tantivy::collector::{Count, TopDocs};
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{FuzzyTermQuery, QueryParser, RangeQuery};
+use tantivy::query::{AllQuery, FuzzyTermQuery, RangeQuery};
 use tantivy::schema::*;
 use tantivy::DocAddress;
 
 use crate::message::Message;
+use maildir::MailEntry;
 use maildir::Maildir;
-use maildir::{MailEntries, MailEntry};
 use rayon::prelude::*;
-use std::fmt;
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::string::ToString;
 use std::time::Duration;
 const BYTES_IN_MB: usize = 1024 * 1024;
 
-type TantivyMessage = Message<DocAddress>;
+pub type TantivyMessage = Message<DocAddress>;
 impl TantivyMessage {
     fn from(
         doc: Document,
         doc_address: Option<DocAddress>,
         schema: &EmailSchema,
     ) -> TantivyMessage {
+        let original = match doc.get_first(schema.original) {
+            Some(t) => match t.text() {
+                Some(t) => Some(String::from(t)),
+                None => None,
+            },
+            None => None,
+        };
+
         TantivyMessage {
-            id: String::from(
-                doc.get_first(schema.id)
-                    .expect("Message without ID")
-                    .text()
-                    .expect("Message with non-text ID"),
-            ),
+            id: doc_address,
             subject: String::from(
                 doc.get_first(schema.subject)
                     .expect("Message without subject")
@@ -66,50 +72,7 @@ impl TantivyMessage {
             date: doc
                 .get_first(schema.date)
                 .map_or(0, |v: &tantivy::schema::Value| v.u64_value()),
-            reference: doc_address,
-        }
-    }
-}
-
-impl DocAddress {
-    fn to_doc_address(self) -> tantivy::DocAddress {
-        return tantivy::DocAddress(self.0, self.1);
-    }
-}
-
-impl fmt::Display for DocAddress {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "({}, {})", self.0, self.1)
-    }
-}
-
-#[derive(Debug)]
-pub struct DocAddressError {
-    msg: String,
-}
-impl ToString for DocAddressError {
-    fn to_string(&self) -> String {
-        self.msg.clone()
-    }
-}
-impl DocAddressError {
-    fn to_str(self) -> String {
-        self.msg
-    }
-}
-impl FromStr for DocAddress {
-    type Err = DocAddressError;
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
-        let data: Vec<&str> = input.trim_matches(&['(', ')'] as &[_]).split(",").collect();
-        let msg = "Not a valid DocAddress";
-        match data.len() {
-            2 => Ok(DocAddress(
-                data[0].parse::<u32>().expect(msg),
-                data[1].parse::<u32>().expect(msg),
-            )),
-            _ => Err(DocAddressError {
-                msg: String::from("Could not parse input DocAddress"),
-            }),
+            original,
         }
     }
 }
@@ -123,6 +86,7 @@ struct EmailSchema {
     thread: Field,
     id: Field,
     date: Field,
+    original: Field,
 }
 
 pub struct Index {
@@ -157,7 +121,12 @@ impl Default for EmailSchema {
         let recipients = schema_builder.add_text_field("recipients", TEXT | STORED);
         let thread = schema_builder.add_text_field("thread", TEXT | STORED);
         let id = schema_builder.add_text_field("id", TEXT | STORED);
-        let date = schema_builder.add_u64_field("date", FAST | INT_INDEXED);
+        let original = schema_builder.add_text_field("original", STORED);
+        let dateoptions = IntOptions::default()
+            .set_fast(Cardinality::SingleValue)
+            .set_stored()
+            .set_indexed();
+        let date = schema_builder.add_u64_field("date", dateoptions);
         let schema = schema_builder.build();
         EmailSchema {
             schema,
@@ -168,6 +137,7 @@ impl Default for EmailSchema {
             thread,
             id,
             date,
+            original,
         }
     }
 }
@@ -338,8 +308,7 @@ impl Indexer {
                     let id = unparsed_msg.id().clone().to_string();
                     match unparsed_msg.parsed() {
                         Ok(msg) => {
-                            let body = msg.get_body().unwrap_or(String::from(""));
-                            let headers = msg.headers;
+                            let headers = &msg.headers;
                             let mut subject: String = "".to_string();
                             let mut from: String = "".to_string();
                             let mut recipients: Vec<String> = vec![];
@@ -363,13 +332,24 @@ impl Indexer {
                                     }
                                 }
                             }
+                            let body = readmail::extract_body(msg, false).unwrap_or_default();
+                            //std::str::from_utf8(unparsed_msg.data().unwrap())
+                            //    .map_err(|e| {
+                            //        println!(
+                            //            "\n\nCOULD not read\n\n {} {} {} {}",
+                            //            from, &subject, &id, date
+                            //        );
+                            //    })
+                            //    .unwrap()
+                            //    .to_string();
                             tx.send(Message {
-                                body,
+                                body: body.value,
                                 from,
                                 subject,
                                 recipients,
                                 date: date as u64,
-                                id,
+                                id: Some(id),
+                                original: None,
                             })
                             .expect("Could not send to channel?");
                         }
@@ -391,7 +371,9 @@ impl Indexer {
             document.add_text(email.from, msg.from.as_str());
             document.add_text(email.recipients, msg.recipients.join(", ").as_str());
             document.add_u64(email.date, msg.date);
-            document.add_text(email.id, msg.id.as_str());
+            if let Some(id) = msg.id {
+                document.add_text(email.id, id.as_str());
+            }
             let progress = index_writer.add_document(document);
             index_bar.set(progress);
         }
@@ -410,30 +392,49 @@ impl Searcher {
         Searcher { index }
     }
 
+    pub fn latest(&self, num: usize, after: Option<u32>) -> Vec<Message<DocAddress>> {
+        let searcher = self.index.index.searcher();
+        let start = SystemTime::now();
+        let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("WTF!?");
+        let after = after.unwrap_or(since_the_epoch.as_secs() as u32);
+        let docs = searcher
+            .search(
+                &AllQuery,
+                &TopDocs::with_limit(num).order_by_field::<u64>(self.index.email.date),
+            )
+            .unwrap();
+        let mut ret = vec![];
+        for doc in docs {
+            let retrieved_doc = searcher.doc(doc.1).unwrap();
+            ret.push(TantivyMessage::from(
+                retrieved_doc,
+                Some(doc.1),
+                &self.index.email,
+            ));
+        }
+        ret
+    }
+
     pub fn by_date(&self) {
-        println!("Searching between 1522704682 and 1524704682");
         let searcher = self.index.index.searcher();
         let docs = RangeQuery::new_u64(self.index.email.date, 1522704682..1524704682);
         let numdocs = searcher.search(&docs, &Count).unwrap();
-        println!("Found {} ", numdocs);
     }
-    pub fn get_doc(&self, da: DocAddress) -> Option<Message<DocAddress>> {
-        let address = da.to_doc_address();
+    pub fn get_doc(&self, address: DocAddress) -> Option<Message<DocAddress>> {
         let searcher = self.index.index.searcher();
         let doc = searcher.doc(address);
         match doc {
-            Ok(d) => Some(TantivyMessage::from(d, Some(address), &self.index.email).msg()),
+            Ok(d) => Some(TantivyMessage::from(d, Some(address), &self.index.email)),
             Err(_) => None,
         }
     }
-    pub fn fuzzy(&self, term: &str) -> Vec<Message<DocAddress>> {
-        println!("Searching for {}", term);
+    pub fn fuzzy(&self, term: &str, num: usize) -> Vec<Message<DocAddress>> {
         let searcher = self.index.index.searcher();
         let term = Term::from_field_text(self.index.email.subject, term);
         let query = FuzzyTermQuery::new(term, 2, true);
-        let (top_docs, count) = searcher
-            .search(&query, &(TopDocs::with_limit(200), Count))
-            .unwrap();
+        let top_docs_by_date =
+            TopDocs::with_limit(num).order_by_field::<u64>(self.index.email.date);
+        let top_docs = searcher.search(&query, &top_docs_by_date).unwrap();
         //let query_parser = QueryParser::for_index(
         //    &self.index.index,
         //    vec![self.index.email.subject, self.index.email.body],
@@ -446,7 +447,11 @@ impl Searcher {
         let mut ret = Vec::new();
         for doc in top_docs {
             let retrieved_doc = searcher.doc(doc.1).unwrap();
-            ret.push(TantivyMessage::from(retrieved_doc, Some(doc.1), &self.index.email).msg());
+            ret.push(TantivyMessage::from(
+                retrieved_doc,
+                Some(doc.1),
+                &self.index.email,
+            ));
         }
         ret
     }

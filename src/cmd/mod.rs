@@ -3,10 +3,18 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{error, fmt};
 use structopt::StructOpt;
+use tantivy::DocAddress;
 
-pub struct Identifier {}
-fn as_identifier(input: &str) -> Identifier {
-    Identifier {}
+fn doc_address(input: &str) -> Result<DocAddress, &str> {
+    let data: Vec<&str> = input.trim_matches(&['(', ')'] as &[_]).split(",").collect();
+    let msg = "Not a valid DocAddress";
+    match data.len() {
+        2 => Ok(DocAddress(
+            data[0].parse::<u32>().expect(msg),
+            data[1].parse::<u32>().expect(msg),
+        )),
+        _ => Err("Nope"),
+    }
 }
 
 fn expand_path(input: &OsStr) -> PathBuf {
@@ -120,18 +128,30 @@ pub enum Command {
 
         #[structopt(short, long, default_value = "short")]
         output: OutputType,
+
+        #[structopt(short, long, default_value = "100")]
+        num: usize,
     },
     #[structopt(name = "date", rename_all = "kebab-case")]
     Date { term: i64 },
 
     #[structopt(rename_all = "kebab-case")]
     Get {
-        #[structopt(parse(try_from_str = "as_identifier"))]
-        id: Identifier,
+        #[structopt(parse(try_from_str = "doc_address"))]
+        id: DocAddress,
+    },
+
+    #[structopt(rename_all = "kebab-case")]
+    Latest {
+        #[structopt(short, long)]
+        num: usize,
     },
 
     #[structopt(name = "test", rename_all = "kebab-case")]
     Test {},
+
+    #[structopt(name = "interactive", rename_all = "kebab-case")]
+    Interactive {},
 }
 
 pub fn opts() -> Opt {
