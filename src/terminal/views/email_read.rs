@@ -1,4 +1,4 @@
-use crate::indexer::tantivy::TantivyMessage;
+use crate::message::Message;
 use tui::backend::Backend;
 use tui::layout::{Alignment, Rect};
 use tui::layout::{Constraint, Direction, Layout};
@@ -6,7 +6,7 @@ use tui::style::{Modifier, Style};
 use tui::widgets::{Block, Borders, Paragraph, Text, Widget};
 use tui::Frame;
 
-pub fn draw<B: Backend>(f: &mut Frame<B>, message: &TantivyMessage, scroll: u16) {
+pub fn draw<B: Backend>(f: &mut Frame<B>, message: &Message, scroll: u16) {
     let text = message.to_long_string();
     let text = [Text::raw(text)];
     let f_r = f.size();

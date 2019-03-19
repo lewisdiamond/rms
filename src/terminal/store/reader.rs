@@ -1,8 +1,8 @@
-use crate::indexer::tantivy::TantivyMessage;
+use crate::message::Message;
 use std::cmp::max;
 
 pub struct ReaderStore {
-    pub message: Option<TantivyMessage>,
+    pub message: Option<Message>,
     pub scroll: u16,
 }
 
@@ -13,17 +13,16 @@ impl ReaderStore {
             scroll: 0,
         }
     }
-}
 
-impl ReaderStore {
-    pub fn read(&mut self, msg: Option<&TantivyMessage>) {
-        match msg {
-            Some(m) => {
-                self.message = Some(m.clone());
-                self.scroll = 0;
-            }
-            None => self.message = None,
+    pub fn get_message(&self) -> Option<Message> {
+        match self.message.as_ref() {
+            Some(m) => Some(m.clone()),
+            None => None,
         }
+    }
+    pub fn read(&mut self, msg: Option<&Message>) {
+        self.message = msg.cloned();
+        self.scroll = 0;
     }
 
     pub fn scroll_top(&mut self) {

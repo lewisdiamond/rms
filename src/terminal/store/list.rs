@@ -1,35 +1,34 @@
-use crate::indexer::tantivy::Searcher;
 use crate::message::Message;
-use std::path::PathBuf;
-use tantivy::DocAddress;
+use crate::stores::IMessageStore;
 
-pub struct ListStore {
-    pub messages: Vec<Message<DocAddress>>,
+pub struct ListStore<'a> {
+    pub messages: Vec<Message>,
     pub selected: usize,
     pub page_size: usize,
+    pub curr_idx: usize,
     pub fetched_first: bool,
-    pub searcher: Searcher,
+    pub message_store: &'a Box<IMessageStore>,
 }
-impl ListStore {
-    pub fn new(index: &PathBuf) -> ListStore {
+
+impl<'a> ListStore<'a> {
+    pub fn new(msg_store: &'a Box<IMessageStore>) -> ListStore<'a> {
         ListStore {
             messages: vec![],
             selected: 0,
             fetched_first: false,
             page_size: 10,
-            searcher: Searcher::new(index.clone()),
+            curr_idx: 0,
+            message_store: msg_store,
         }
     }
-}
 
-impl ListStore {
-    pub fn set_results(&mut self, messages: Vec<Message<DocAddress>>) -> &Self {
+    pub fn set_results(&mut self, messages: Vec<Message>) -> &Self {
         self.messages = messages;
         self.set_selected(0);
         self
     }
 
-    pub fn get_selected(&mut self) -> Option<&Message<DocAddress>> {
+    pub fn get_selected(&mut self) -> Option<&Message> {
         self.messages.get(self.selected)
     }
 
@@ -63,11 +62,17 @@ impl ListStore {
     }
 
     pub fn latest(&mut self) {
-        let mut num = 100;
+        let mut page_size = self.page_size;
         if !self.fetched_first {
-            num = 1000;
+            page_size = 1000;
             self.fetched_first = true;
         }
-        self.messages = self.searcher.latest(num, None).into_iter().collect();
+        let messages = self
+            .message_store
+            .get_messages_page(self.curr_idx, page_size);
+        match messages {
+            Ok(messages) => self.messages = messages,
+            Err(e) => self.messages = vec![], // TODO Handle error
+        }
     }
 }

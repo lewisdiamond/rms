@@ -1,24 +1,28 @@
-use std::path::PathBuf;
 mod list;
 mod reader;
 mod search;
+mod tags;
+use crate::stores::IMessageStore;
 use list::ListStore;
 use reader::ReaderStore;
 use search::SearchStore;
+use tags::TagsStore;
 
-pub struct Store {
+pub struct Store<'a> {
     pub exit: bool,
-    pub list_store: ListStore,
-    pub search_store: SearchStore,
+    pub list_store: ListStore<'a>,
+    pub search_store: SearchStore<'a>,
     pub reader_store: ReaderStore,
+    pub tags_store: TagsStore<'a>,
 }
-impl Store {
-    pub fn new(index: &PathBuf) -> Store {
+impl<'a> Store<'a> {
+    pub fn new(message_store: &'a Box<IMessageStore>) -> Store {
         Store {
             exit: false,
-            search_store: SearchStore::new(index),
-            list_store: ListStore::new(index),
+            search_store: SearchStore::new(message_store),
+            list_store: ListStore::new(message_store),
             reader_store: ReaderStore::new(),
+            tags_store: TagsStore::new(message_store),
         }
     }
 }

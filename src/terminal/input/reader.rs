@@ -30,6 +30,10 @@ impl Runnable for ReaderRunner {
                         store.reader_store.scroll(20);
                         return true;
                     }
+                    Key::Char('t') => {
+                        store.tags_store.edit(store.reader_store.get_message());
+                        return true;
+                    }
                     Key::Home => {
                         store.reader_store.scroll_top();
                         return true;

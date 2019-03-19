@@ -1,26 +1,22 @@
-use crate::indexer::tantivy::Searcher;
 use crate::message::Message;
-use std::path::PathBuf;
-use tantivy::DocAddress;
+use crate::stores::IMessageStore;
 
-pub struct SearchStore {
+pub struct SearchStore<'a> {
     pub search_term: String,
     pub searching: bool,
-    pub searcher: Searcher,
-    pub results: Vec<Message<DocAddress>>,
+    pub searcher: &'a Box<IMessageStore>,
+    pub results: Vec<Message>,
 }
-impl SearchStore {
-    pub fn new(index: &PathBuf) -> SearchStore {
+impl<'a> SearchStore<'a> {
+    pub fn new(msg_store: &'a Box<IMessageStore>) -> SearchStore {
         SearchStore {
             search_term: String::from(""),
             searching: false,
-            searcher: Searcher::new(index.clone()),
+            searcher: msg_store,
             results: vec![],
         }
     }
-}
 
-impl SearchStore {
     pub fn enable_search(&mut self) {
         self.searching = true;
     }
@@ -29,13 +25,29 @@ impl SearchStore {
         self.searching = false;
     }
 
+    fn _search(&mut self) {
+        self.results = match self.searcher.search_fuzzy(self.search_term.clone(), 100) {
+            Ok(r) => r,
+            Err(_e) => vec![],
+        };
+    }
+
     pub fn search(&mut self, c: char) {
         self.search_term = format!("{}{}", self.search_term, c);
-        self.results = self.searcher.fuzzy(&self.search_term, 100);
+        self._search();
+    }
+
+    pub fn set_search(&mut self, s: String) {
+        self.search_term = s;
+        self._search()
+    }
+
+    pub fn get(&self, idx: usize) -> Option<&Message> {
+        self.results.get(idx)
     }
 
     pub fn backspace(&mut self) {
         self.search_term.pop();
-        self.results = self.searcher.fuzzy(&self.search_term, 100);
+        self._search();
     }
 }

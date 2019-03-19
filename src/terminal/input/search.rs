@@ -12,19 +12,24 @@ impl Runnable for SearchRunner {
                 Event::Input(key) => match key {
                     Key::Esc => {
                         store.search_store.disable_search();
-                        return true;
+                        true
                     }
                     Key::Char('\n') => {
                         store.search_store.disable_search();
-                        return true;
+                        true
                     }
                     Key::Char(c) => {
                         store.search_store.search(c.clone());
-                        return true;
+                        true
                     }
                     Key::Backspace => {
                         store.search_store.backspace();
-                        return true;
+                        true
+                    }
+                    Key::Ctrl('\x08') => {
+                        // Backspace
+                        store.search_store.set_search("".to_string());
+                        true
                     }
                     _ => {
                         return false;

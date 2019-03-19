@@ -1,100 +1,104 @@
-use html2text::from_read;
+use crate::message::{Body, Mime};
+use html5ever::rcdom::{Handle, Node, NodeData, RcDom};
+use html5ever::serialize::{serialize, SerializeOpts};
+use html5ever::tendril::TendrilSink;
+use html5ever::tree_builder::TreeBuilderOpts;
+use html5ever::{local_name, parse_document, ParseOpts};
 use log::{debug, error};
 use mailparse::*;
 use std::cmp::Ordering;
+use std::time::{Duration, Instant};
 
-#[derive(Debug, Default)]
-pub struct Body {
-    pub mime: String,
-    pub value: String,
-}
-impl Body {
-    fn new(mime: String, value: String) -> Body {
-        Body { mime, value }
-    }
-}
-
-fn cmp_body(x: &Option<Body>, y: &Option<Body>, prefer_html: bool) -> Ordering {
-    if x.is_none() && y.is_none() {
-        return Ordering::Equal;
-    }
-    if x.is_some() && y.is_none() {
-        return Ordering::Less;
-    }
-    if x.is_none() && y.is_some() {
-        return Ordering::Greater;
-    }
-    let x = x.as_ref().unwrap();
-    let y = y.as_ref().unwrap();
+fn cmp_body(x: &Body, y: &Body, prefer: &Mime) -> Ordering {
     if x.mime == y.mime {
-        return Ordering::Equal;
+        return x.value.len().cmp(&y.value.len());
     }
-    match x.mime.as_str() {
-        "text/body" => Ordering::Greater,
-        "text/html" => {
-            if prefer_html || y.mime == "text/body" {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        }
-        "text/plain" => {
-            if !prefer_html || y.mime == "text/body" {
-                Ordering::Less
-            } else {
-                Ordering::Greater
-            }
-        }
-        _ => Ordering::Less,
+    if x.mime == *prefer {
+        Ordering::Less
+    } else {
+        Ordering::Greater
     }
 }
-pub fn extract_body(msg: ParsedMail, prefer_html: bool) -> Option<Body> {
+
+pub fn extract_body(msg: &mut ParsedMail, prefer_html: bool) -> Vec<Body> {
     let mut raw_body = None;
-    if let Ok(mut text) = msg.get_body() {
-        if msg.ctype.mimetype == "text/html" {
-            text = from_read(text.as_bytes(), 80);
-        }
-        raw_body = Some(Body {
-            mime: String::from("text/body"),
-            value: text,
-        });
+    let prefered_mime = if prefer_html {
+        Mime::Html
+    } else {
+        Mime::PlainText
     };
-    let mut bodies: Vec<Option<Body>> = msg
+    if let Ok(text) = msg.get_body() {
+        let mime = Mime::from_str(&msg.ctype.mimetype);
+        raw_body = Some(Body::new(mime, String::from(text)));
+    };
+    let mut bodies = msg
         .subparts
-        .into_iter()
-        .map(|s| {
-            let mime = &s.ctype.mimetype;
-            match mime.as_str() {
-                "text/plain" => {
-                    if let Ok(s) = s.get_body() {
-                        Some(Body {
-                            mime: mime.clone(),
-                            value: String::from(s),
-                        })
-                    } else {
-                        None
-                    }
+        .iter_mut()
+        .map(|mut s| {
+            let mime = Mime::from_str(&s.ctype.mimetype);
+            match mime {
+                Mime::PlainText | Mime::Html => {
+                    s.get_body().ok().map(|b| Body::new(mime, String::from(b)))
                 }
-                "text/html" => {
-                    if let Ok(s) = s.get_body() {
-                        Some(Body {
-                            mime: mime.clone(),
-                            value: from_read(s.as_bytes(), 80),
-                        })
-                    } else {
-                        None
-                    }
-                }
-                "multipart/alternative" | "multipart/related" => extract_body(s, prefer_html),
-                _ => {
-                    debug!("unknown mime {}", mime);
+                Mime::Nested => extract_body(&mut s, prefer_html).into_iter().next(),
+                Mime::Unknown => {
+                    debug!("unknown mime {}", mime.as_str());
                     None
                 }
             }
         })
-        .collect();
+        .filter_map(|s| s)
+        .collect::<Vec<Body>>();
+    if raw_body.is_some() {
+        bodies.push(raw_body.expect("COULD NOT UNWRAP RAW_BODY"));
+    }
+    bodies.sort_unstable_by(|x, y| cmp_body(x, y, &prefered_mime));
+    bodies
+}
 
-    bodies.push(raw_body);
-    bodies.sort_unstable_by(|x, y| cmp_body(x, y, prefer_html));
-    bodies.into_iter().filter_map(|x| x).next()
+pub fn html2text(text: &str) -> String {
+    let opts = ParseOpts {
+        tree_builder: TreeBuilderOpts {
+            drop_doctype: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let dom = parse_document(RcDom::default(), opts)
+        .from_utf8()
+        .read_from(&mut text.as_bytes())
+        .expect("COULD NOT UNWRAP DOM");
+    let document_children = dom.document.children.borrow();
+    let html = document_children.get(0).expect("COULD NOT UNWRAP HTML");
+    let body_rc = html.children.borrow();
+    let body = body_rc
+        .iter()
+        .filter(|n| match n.data {
+            NodeData::Element { ref name, .. } => name.local == local_name!("body"),
+            _ => false,
+        })
+        .next();
+
+    let ret = match body {
+        Some(b) => render_tag(&b)
+            .into_iter()
+            .filter(|s| s != "")
+            .map(|s| s.trim().to_string())
+            .collect::<Vec<String>>()
+            .join("\n"),
+        None => "".to_string(),
+    };
+    ret
+}
+
+pub fn render_tag(node: &Handle) -> Vec<String> {
+    let mut ret = vec![];
+    match node.data {
+        NodeData::Text { ref contents } => ret.push(contents.borrow().trim().to_string()),
+        _ => {}
+    };
+    for child in node.children.borrow().iter() {
+        ret.append(&mut render_tag(child));
+    }
+    ret
 }

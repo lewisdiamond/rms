@@ -3,21 +3,8 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{error, fmt};
 use structopt::StructOpt;
-use tantivy::DocAddress;
 
-fn doc_address(input: &str) -> Result<DocAddress, &str> {
-    let data: Vec<&str> = input.trim_matches(&['(', ')'] as &[_]).split(",").collect();
-    let msg = "Not a valid DocAddress";
-    match data.len() {
-        2 => Ok(DocAddress(
-            data[0].parse::<u32>().expect(msg),
-            data[1].parse::<u32>().expect(msg),
-        )),
-        _ => Err("Nope"),
-    }
-}
-
-fn expand_path(input: &OsStr) -> PathBuf {
+pub fn expand_path(input: &OsStr) -> PathBuf {
     let input_str = input
         .to_str()
         .expect("Unable to expand the given path. Can't convert input to &str.");
@@ -112,19 +99,12 @@ pub enum Command {
 
         #[structopt(short, long)]
         full: bool,
-
         #[structopt(short, long)]
-        threads: Option<usize>,
-
-        #[structopt(short = "M", long)]
-        mem_per_thread: Option<usize>,
+        debug: bool,
     },
     #[structopt(name = "search", rename_all = "kebab-case")]
     Search {
         term: String,
-
-        #[structopt(short, long, default_value = "3")]
-        delimiter: u8,
 
         #[structopt(short, long, default_value = "short")]
         output: OutputType,
@@ -137,8 +117,11 @@ pub enum Command {
 
     #[structopt(rename_all = "kebab-case")]
     Get {
-        #[structopt(parse(try_from_str = "doc_address"))]
-        id: DocAddress,
+        #[structopt(short, long)]
+        id: String,
+
+        #[structopt(short, long, default_value = "short")]
+        output: OutputType,
     },
 
     #[structopt(rename_all = "kebab-case")]
@@ -146,6 +129,9 @@ pub enum Command {
         #[structopt(short, long)]
         num: usize,
     },
+
+    #[structopt(name = "tag")]
+    Tag { id: String, tags: Vec<String> },
 
     #[structopt(name = "test", rename_all = "kebab-case")]
     Test {},

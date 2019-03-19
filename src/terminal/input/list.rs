@@ -17,11 +17,11 @@ impl Runnable for ListRunner {
                     store.list_store.prev();
                     return true;
                 }
-                Key::PageDown | Key::Ctrl('j') => {
+                Key::PageDown | Key::Alt('j') | Key::Ctrl('d') => {
                     store.list_store.next_page();
                     return true;
                 }
-                Key::PageUp | Key::Ctrl('k') => {
+                Key::PageUp | Key::Alt('k') | Key::Ctrl('u') => {
                     store.list_store.prev_page();
                     return true;
                 }
@@ -39,7 +39,13 @@ impl Runnable for ListRunner {
                     return true;
                 }
                 Key::Char('\n') => {
-                    store.reader_store.read(store.list_store.get_selected());
+                    store
+                        .reader_store
+                        .read(if store.search_store.results.len() > 0 {
+                            store.search_store.get(store.list_store.selected)
+                        } else {
+                            store.list_store.get_selected()
+                        });
                     return true;
                 }
                 _ => {
