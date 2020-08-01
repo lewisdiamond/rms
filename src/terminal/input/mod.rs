@@ -6,15 +6,15 @@ mod reader;
 mod search;
 
 pub struct InputHandler {
-    name: String,
+    pub name: String,
     pre: bool,
     f: Box<Runnable>,
     children: Vec<Box<InputHandler>>,
 }
 
 #[derive(Debug)]
-pub struct NoopRunner {}
-impl Runnable for NoopRunner {
+pub struct _NoopRunner {}
+impl Runnable for _NoopRunner {
     fn run(&self, _e: &Event<Key>, _store: &mut Store) -> bool {
         false
     }

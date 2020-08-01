@@ -1,7 +1,7 @@
-use crate::message::{get_id, Body, Message, Mime};
+use crate::message::{Message, ShortMessage};
 use crate::stores::{IMessageSearcher, IMessageStorage, IMessageStore, MessageStoreError};
 use chrono::{DateTime, Utc};
-use log::{debug, error, info};
+use log::error;
 use maildir::{MailEntry, Maildir};
 use pbr::{MultiBar, ProgressBar};
 use rayon::prelude::*;
@@ -9,25 +9,17 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-pub struct MessageStore<I, S>
-where
-    I: IMessageSearcher,
-    S: IMessageStorage,
-{
-    pub searcher: Box<I>,
-    pub storage: Box<S>,
+pub struct MessageStore {
+    pub searcher: Box<dyn IMessageSearcher>,
+    pub storage: Option<Box<dyn IMessageStorage>>,
     progress: Option<ProgressBar<pbr::Pipe>>,
     display_progress: bool,
 }
-impl<I, S> IMessageStore for MessageStore<I, S>
-where
-    I: IMessageSearcher,
-    S: IMessageStorage,
-{
-    fn get_message(&self, id: String) -> Result<Message, MessageStoreError> {
-        self.storage.get_message(id)
+impl IMessageStore for MessageStore {
+    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError> {
+        self.searcher.get_message(id)
     }
 
     fn add_message(
@@ -35,7 +27,9 @@ where
         msg: Message,
         parsed_body: String,
     ) -> Result<String, MessageStoreError> {
-        self.searcher.add_message(msg, parsed_body)
+        let id = msg.id.clone();
+        self.searcher.add_message(msg, parsed_body)?;
+        Ok(id)
     }
 
     fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError> {
@@ -46,7 +40,7 @@ where
         id: String,
         tags: HashSet<String>,
     ) -> Result<usize, MessageStoreError> {
-        self.searcher.tag_message_id(id, tags)
+        unimplemented!();
     }
 
     fn tag_message(
@@ -65,7 +59,7 @@ where
         start: usize,
         num: usize,
     ) -> Result<Vec<Message>, MessageStoreError> {
-        self.storage.get_messages_page(start, num)
+        self.searcher.get_messages_page(start, num)
     }
 
     fn search_fuzzy(&self, query: String, num: usize) -> Result<Vec<Message>, MessageStoreError> {
@@ -82,12 +76,12 @@ where
         unimplemented!();
     }
 }
-impl<I, S> MessageStore<I, S>
-where
-    I: IMessageSearcher,
-    S: IMessageStorage,
-{
-    pub fn new(searcher: Box<I>, storage: Box<S>, display_progress: bool) -> Self {
+impl MessageStore {
+    pub fn new(
+        searcher: Box<dyn IMessageSearcher>,
+        storage: Option<Box<dyn IMessageStorage>>,
+        display_progress: bool,
+    ) -> Self {
         MessageStore {
             searcher,
             storage,
@@ -119,7 +113,7 @@ where
         let mut mb = MultiBar::new();
         mb.println(&format!("Indexing {} emails", num));
         let mut index_bar = mb.create_bar(num as u64);
-        if num < 10000000 {
+        if num < 10_000_000 {
             mb.println("This will take no time!");
         }
         index_bar.message("Indexed ");
@@ -155,8 +149,8 @@ where
             mails
                 .into_par_iter()
                 .for_each_with(tx, |tx, msg| match msg {
-                    Ok(mut unparsed_msg) => {
-                        let message = Message::from_mailentry(&mut unparsed_msg);
+                    Ok(unparsed_msg) => {
+                        let message = Message::from_mailentry(unparsed_msg);
                         match message {
                             Ok(msg) => {
                                 let parsed_body = msg.get_body().as_text();

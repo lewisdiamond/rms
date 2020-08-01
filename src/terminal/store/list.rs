@@ -7,11 +7,11 @@ pub struct ListStore<'a> {
     pub page_size: usize,
     pub curr_idx: usize,
     pub fetched_first: bool,
-    pub message_store: &'a Box<IMessageStore>,
+    pub message_store: &'a IMessageStore,
 }
 
 impl<'a> ListStore<'a> {
-    pub fn new(msg_store: &'a Box<IMessageStore>) -> ListStore<'a> {
+    pub fn new(msg_store: &'a IMessageStore) -> ListStore<'a> {
         ListStore {
             messages: vec![],
             selected: 0,
@@ -20,12 +20,6 @@ impl<'a> ListStore<'a> {
             curr_idx: 0,
             message_store: msg_store,
         }
-    }
-
-    pub fn set_results(&mut self, messages: Vec<Message>) -> &Self {
-        self.messages = messages;
-        self.set_selected(0);
-        self
     }
 
     pub fn get_selected(&mut self) -> Option<&Message> {

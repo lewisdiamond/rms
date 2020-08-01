@@ -1,27 +1,38 @@
-use crate::message::{Body, Message, Mime};
-use crate::stores::{IMessageSearcher, IMessageStorage, MessageStoreError};
+use crate::message::{Message, ShortMessage};
+use crate::stores::{IMessageStorage, MessageStoreError};
 use chrono::{DateTime, Utc};
-use log::{info, trace, warn};
+use rocksdb::{DBCompactionStyle, DBCompressionType};
 use rocksdb::{DBVector, Options, DB};
-use serde::{Deserialize, Serialize};
-use std::cmp;
+use serde_json::Result as SResult;
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::Path;
 use std::string::ToString;
-const BYTES_IN_MB: usize = 1024 * 1024;
 
-#[derive(Serialize, Deserialize)]
-struct RocksDBMessage {
-    id: String,
-    body: String,
-    tag: HashSet<String>,
-}
+type RocksDBMessage = Message;
 impl RocksDBMessage {
-    fn from(doc: DBVector) -> RocksDBMessage {
-        RocksDBMessage {
-            id: "a".to_string(),
-            body: "b".to_string(),
-            tag: HashSet::new(),
+    fn from_rocksdb(msg: DBVector) -> Result<RocksDBMessage, MessageStoreError> {
+        let msg_r = msg
+            .to_utf8()
+            .ok_or(Err(MessageStoreError::CouldNotGetMessage(
+                "Message is malformed in some way".to_string(),
+            )));
+
+        match msg_r {
+            Ok(msg) => serde_json::from_str(msg).map_err(|e| {
+                MessageStoreError::CouldNotGetMessage("Unable to parse the value".to_string())
+            }),
+            Err(e) => e,
+        }
+    }
+    fn to_rocksdb(&self) -> Result<(String, Vec<u8>), MessageStoreError> {
+        let id = self.id.clone();
+        let msg = serde_json::to_string(&self);
+        match msg {
+            Ok(msg) => Ok((id, msg.into_bytes())),
+            Err(e) => Err(MessageStoreError::CouldNotConvertMessage(format!(
+                "Failed to convert message for rocksdb: {}",
+                e
+            ))),
         }
     }
 }
@@ -29,15 +40,36 @@ impl RocksDBMessage {
 pub struct RocksDBStore {
     db: DB,
 }
+
 impl IMessageStorage for RocksDBStore {
-    fn get_message(&self, id: String) -> Result<Message, MessageStoreError> {
-        self.get_message(id.as_str())
-            .ok_or(MessageStoreError::MessageNotFound(
-                "Unable to find message with that id".to_string(),
-            ))
+    fn add_message(&mut self, msg: &RocksDBMessage) -> Result<String, MessageStoreError> {
+        let rocks_msg = msg.to_rocksdb();
+        match rocks_msg {
+            Ok((id, data)) => self
+                .db
+                .put(id.clone().into_bytes(), data)
+                .map_err(|_| {
+                    MessageStoreError::CouldNotAddMessage("Failed to add message".to_string())
+                })
+                .map(|_| id),
+            Err(e) => Err(MessageStoreError::CouldNotAddMessage(format!(
+                "Failed to add message: {}",
+                e
+            ))),
+        }
     }
-    fn add_message(&mut self, msg: Message) -> Result<String, MessageStoreError> {
-        unimplemented!();
+    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError> {
+        let m = self.db.get(id.into_bytes());
+        match m {
+            Ok(Some(message)) => Ok(Some(RocksDBMessage::from_rocksdb(message)?)),
+            Ok(None) => Err(MessageStoreError::CouldNotGetMessage(
+                "Message obtained was None".to_string(),
+            )),
+            Err(e) => Err(MessageStoreError::CouldNotGetMessage(format!(
+                "Could not get message due to : {}",
+                e
+            ))),
+        }
     }
     fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!()
@@ -60,127 +92,105 @@ impl IMessageStorage for RocksDBStore {
         unimplemented!()
     }
 }
-impl IMessageSearcher for TantivyStore {
-    fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError> {
-        if self.index_writer.is_none() {
-            let index_writer = self.get_index_writer(num)?;
-            self.index_writer = Some(index_writer);
-        }
-        Ok(())
-    }
-
-    fn finish_indexing_process(&mut self) -> Result<(), MessageStoreError> {
-        let writer = &mut self.index_writer;
-        match writer {
-            Some(writer) => match writer.commit() {
-                Ok(_) => Ok(()),
-                Err(e) => Err(MessageStoreError::CouldNotAddMessage(
-                    "Failed to commit to index".to_string(),
-                )),
-            },
-            None => Err(MessageStoreError::CouldNotAddMessage(
-                "Trying to commit index without an actual index".to_string(),
-            )),
-        }
-    }
-
-    fn add_message(
-        &mut self,
-        msg: Message,
-        parsed_body: String,
-    ) -> Result<String, MessageStoreError> {
-        self._add_message(msg, parsed_body)
-    }
-    fn search_fuzzy(&self, query: String, num: usize) -> Result<Vec<Message>, MessageStoreError> {
-        Ok(self.fuzzy(query.as_str(), num))
-    }
-    fn search_by_date(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> Result<Vec<Message>, MessageStoreError> {
-        Ok(vec![])
-    }
-    fn delete_message(&mut self, msg: Message) -> Result<(), MessageStoreError> {
-        Ok(())
-    }
-    fn tag_message_id(
-        &mut self,
-        id: String,
-        tags: HashSet<String>,
-    ) -> Result<usize, MessageStoreError> {
-        let message = self.get_message(id.as_str());
-        match message {
-            Some(mut message) => {
-                let now = Instant::now();
-                self.start_indexing_process(1)?;
-                println!("{}", now.elapsed().as_nanos());
-                self._delete_message(&message)?;
-                println!("{}", now.elapsed().as_nanos());
-                message.tags = tags;
-                let body = message.get_body().clone();
-                self._add_message(message, body.value)?;
-                println!("{}", now.elapsed().as_nanos());
-                self.finish_indexing_process()?;
-                println!("{}", now.elapsed().as_nanos());
-                Ok(1)
-            }
-            None => Err(MessageStoreError::MessageNotFound(
-                "Could not tag message because the message was not found".to_string(),
-            )),
-        }
-    }
-    fn tag_message(
-        &mut self,
-        msg: Message,
-        tags: HashSet<String>,
-    ) -> Result<usize, MessageStoreError> {
-        Ok(1)
-    }
-    fn get_messages_page(
-        &self,
-        start: Message,
-        num: usize,
-    ) -> Result<Vec<Message>, MessageStoreError> {
-        Ok(vec![])
-    }
-    fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
-        unimplemented!();
-    }
-}
 
 impl RocksDBStore {
-    pub fn new(path: PathBuf) -> Self {
-        unimplemented!()
+    pub fn new<P: AsRef<Path>>(path: P) -> Self {
+        let mut opts = Options::default();
+        opts.increase_parallelism(16);
+        opts.create_if_missing(true);
+        opts.set_compaction_style(DBCompactionStyle::Level);
+        opts.set_skip_stats_update_on_db_open(true);
+        opts.set_compression_type(DBCompressionType::Lz4);
+        opts.create_missing_column_families(true);
+        opts.set_use_direct_reads(true);
+        opts.set_allow_mmap_reads(true);
+        opts.set_allow_mmap_writes(true);
+        opts.set_max_open_files(2);
+        let db = DB::open_default(path).unwrap();
+        RocksDBStore { db }
     }
     fn _add_message(
         &mut self,
-        msg: Message,
-        parsed_body: String,
+        _msg: &Message,
+        _parsed_body: String,
     ) -> Result<String, MessageStoreError> {
         unimplemented!()
     }
-    fn _delete_message(&mut self, msg: &Message) -> Result<(), MessageStoreError> {
-        unimplemented!()
-    }
-    pub fn tag_doc(&self, doc: Document, tags: Vec<String>) -> Result<(), MessageStoreError> {
+    fn _delete_message(&mut self, _msg: &Message) -> Result<(), MessageStoreError> {
         unimplemented!()
     }
 
-    pub fn latest(&self, num: usize) -> Vec<Message> {
+    pub fn latest(&self, _num: usize) -> Vec<Message> {
         unimplemented!()
     }
+}
 
-    pub fn by_date(&self) {
-        unimplemented!();
+#[cfg(test)]
+mod test {
+    use super::RocksDBStore;
+    use crate::message::{Body, Message, Mime};
+    use crate::stores::IMessageStorage;
+    use rand::distributions::Alphanumeric;
+    use rand::{thread_rng, Rng};
+    use rocksdb::{Options, DB};
+    use std::collections::HashSet;
+
+    struct StoreInit {
+        path: Option<String>,
+        store: RocksDBStore,
     }
-    pub fn get_doc(&self, id: &str) -> Result<Document, tantivy::Error> {
-        unimplemented!();
+    impl StoreInit {
+        fn new() -> StoreInit {
+            let rand_string: String = thread_rng().sample_iter(&Alphanumeric).take(5).collect();
+            let mut path = std::path::PathBuf::new();
+            path.push("./test_db/");
+            path.push(rand_string);
+            let newdb = RocksDBStore::new(&path);
+            StoreInit {
+                path: path.to_str().map(|s| s.to_string()),
+                store: newdb,
+            }
+        }
     }
-    pub fn get_message(&self, id: &str) -> Option<Message> {
-        unimplemented!();
+    impl Drop for StoreInit {
+        fn drop(&mut self) {
+            let opts = Options::default();
+            let path = self.path.as_ref().unwrap();
+            DB::destroy(&opts, path);
+            std::fs::remove_dir_all(path);
+        }
     }
-    pub fn search(&self, text: &str, num: usize) -> Vec<Message> {
-        unimplemented!();
+    #[test]
+    fn add_message() {
+        let store = &mut StoreInit::new().store;
+        let message = Message {
+            id: "some_id".to_string(),
+            from: "It's me, Mario!".to_string(),
+            body: vec![Body {
+                mime: Mime::PlainText,
+                value: "Test body".to_string(),
+            }],
+            subject: "test_subject".to_string(),
+            recipients: vec!["r1".to_string(), "r2".to_string()],
+            date: 4121251,
+            original: vec![0],
+            tags: vec!["tag1".to_string(), "tag2".to_string()]
+                .into_iter()
+                .collect::<HashSet<String>>(),
+        };
+        store.add_message(&message).ok().unwrap();
+        let retrieved = store
+            .get_message("some_id".to_string())
+            .ok()
+            .unwrap()
+            .unwrap();
+        assert_eq!(message, retrieved);
+    }
+    #[test]
+    fn test_rocksdb2() {
+        let store = &StoreInit::new().store;
+        store.db.put(b"key", b"value2").unwrap();
+        let get = store.db.get(b"key").ok().unwrap().unwrap();
+        assert_eq!("value2", get.to_utf8().unwrap());
     }
 }

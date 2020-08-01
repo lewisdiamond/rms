@@ -18,6 +18,9 @@ pub fn source() -> Box<BufRead> {
         .args(&[Arg::from_usage(
             "[input] 'Read from a file, or stdin if omitted'",
         )])
+        .args(&[Arg::from_usage(
+            "[-o destination] 'Save attachment to destination'",
+        )])
         .get_matches();
 
     match matches.value_of("input") {

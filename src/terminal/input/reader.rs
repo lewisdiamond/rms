@@ -12,39 +12,35 @@ impl Runnable for ReaderRunner {
                 Event::Input(key) => match key {
                     Key::Esc | Key::Char('q') => {
                         store.reader_store.read(None);
-                        return true;
+                        true
                     }
                     Key::Char('j') | Key::Down => {
                         store.reader_store.scroll(3);
-                        return true;
+                        true
                     }
                     Key::Char('k') | Key::Up => {
                         store.reader_store.scroll(-3);
-                        return true;
+                        true
                     }
                     Key::Ctrl('u') | Key::PageUp => {
                         store.reader_store.scroll(-20);
-                        return true;
+                        true
                     }
                     Key::Ctrl('d') | Key::PageDown => {
                         store.reader_store.scroll(20);
-                        return true;
+                        true
                     }
                     Key::Char('t') => {
                         store.tags_store.edit(store.reader_store.get_message());
-                        return true;
+                        true
                     }
                     Key::Home => {
                         store.reader_store.scroll_top();
-                        return true;
+                        true
                     }
-                    _ => {
-                        return false;
-                    }
+                    _ => false,
                 },
-                _ => {
-                    return false;
-                }
+                _ => false,
             }
         } else {
             false

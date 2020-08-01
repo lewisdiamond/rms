@@ -1,8 +1,10 @@
 use log::{error, info, trace};
 use rms::cmd::{opts, Command, OutputType};
-use rms::stores::{MessageStoreBuilder, Searchers, Storages};
+use rms::stores::{IMessageStore, MessageStoreBuilder, Searchers, Storages};
 use rms::terminal;
 use std::collections::HashSet;
+use std::io::{self, Write};
+use std::time::Instant;
 
 fn main() {
     pretty_env_logger::init();
@@ -54,6 +56,7 @@ fn main() {
             //message_store.index_mails(full);
         }
         Command::Search { term, output, num } => {
+            let now = Instant::now();
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
                 .searcher(Searchers::Tantivy(index_dir_path.clone()))
@@ -71,6 +74,12 @@ fn main() {
                         }
                         OutputType::Full => {
                             println!("{:?}", results);
+                        }
+                        OutputType::Raw => {
+                            let mut out = io::stdout();
+                            for result in results {
+                                out.write_all(result.original.as_ref()).unwrap();
+                            }
                         }
                     }
                 }
@@ -99,29 +108,64 @@ fn main() {
 
             match message_store {
                 Ok(store) => {
-                    let result = store.get_message(id).ok().unwrap();
-                    match output {
-                        OutputType::Short => {
-                            println!("{:?} | {}", result.id, result.subject);
-                        }
-                        OutputType::Full => {
-                            println!("{:?}", result);
-                        }
+                    let result = store.get_message(id);
+                    match result {
+                        Ok(Some(good_msg)) => match output {
+                            OutputType::Short => {
+                                println!("{} | {}", good_msg.id, good_msg.subject);
+                            }
+                            OutputType::Raw => {
+                                io::stdout().write_all(good_msg.original.as_ref()).unwrap();
+                            }
+                            OutputType::Full => {
+                                println!("From: {}", good_msg.from);
+                                println!(
+                                    "To: {}",
+                                    good_msg
+                                        .recipients
+                                        .get(0)
+                                        .unwrap_or(&String::from("Unknown"))
+                                );
+                                println!("Subject: {}", good_msg.subject);
+                                println!(
+                                    "{}",
+                                    good_msg
+                                        .body
+                                        .first()
+                                        .map(|b| b.value.clone())
+                                        .unwrap_or(String::from("No body"))
+                                );
+                            }
+                        },
+                        Ok(None) => error!("Message not found"),
+                        Err(e) => error!("ERROR {}", e),
                     }
                 }
-                Err(e) => error!("{}", e),
+                Err(e) => error!("Store isn't right... {}", e),
             }
         }
         Command::Interactive {} => {
             terminal::start(index_dir_path).unwrap();
         }
         Command::Latest { num: _num } => {
-            let _message_store = MessageStoreBuilder::new().build(); //maildir_path[0].clone(), index_dir_path);
-                                                                     //let searcher = Searcher::new(index_dir_path);
-                                                                     //let stuff = searcher.latest(num, None);
-                                                                     //for s in stuff {
-                                                                     //    println!("{}", s.date);
-                                                                     //}
+            let message_store = MessageStoreBuilder::new()
+                .storage(Storages::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .build();
+            match message_store {
+                Ok(store) => {
+                    let page = store.get_messages_page(0, _num);
+                    match page {
+                        Ok(msgs) => {
+                            for m in msgs {
+                                println!("{}", m.id);
+                            }
+                        }
+                        Err(e) => println!("Could not read messages, {}", e),
+                    }
+                }
+                Err(e) => println!("Could not load the index, {}", e),
+            }
         }
         Command::Tag { id, tags } => {
             let message_store = MessageStoreBuilder::new()

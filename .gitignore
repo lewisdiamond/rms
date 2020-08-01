@@ -1,3 +1,5 @@
 /target
-/idx
+/idx*
+/.err
 **/*.rs.bk
+/html_emails

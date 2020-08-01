@@ -5,10 +5,8 @@ mod views;
 use crate::stores::{MessageStoreBuilder, Searchers, Storages};
 use events::Events;
 use input::{handlers, run};
-use std::cell::RefCell;
 use std::io;
 use std::path::PathBuf;
-use std::rc::Rc;
 use store::Store;
 use termion::raw::IntoRawMode;
 use tui::backend::TermionBackend;
@@ -38,10 +36,10 @@ pub fn start(index: PathBuf) -> Result<(), io::Error> {
                     break;
                 };
             }
-            terminal.clear();
+            terminal.clear()?;
         }
         Err(e) => {
-            terminal.clear();
+            terminal.clear()?;
             println!("Error {}", e);
         }
     };

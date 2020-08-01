@@ -4,11 +4,11 @@ use crate::stores::IMessageStore;
 pub struct SearchStore<'a> {
     pub search_term: String,
     pub searching: bool,
-    pub searcher: &'a Box<IMessageStore>,
+    pub searcher: &'a IMessageStore,
     pub results: Vec<Message>,
 }
 impl<'a> SearchStore<'a> {
-    pub fn new(msg_store: &'a Box<IMessageStore>) -> SearchStore {
+    pub fn new(msg_store: &'a IMessageStore) -> SearchStore {
         SearchStore {
             search_term: String::from(""),
             searching: false,

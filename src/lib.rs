@@ -6,9 +6,7 @@ extern crate num_cpus;
 extern crate pbr;
 extern crate pretty_env_logger;
 extern crate rayon;
-#[macro_use]
 extern crate serde;
-#[macro_use]
 extern crate serde_json;
 extern crate shellexpand;
 extern crate structopt;
@@ -22,3 +20,9 @@ pub mod message;
 pub mod readmail;
 pub mod stores;
 pub mod terminal;
+
+extern crate jemallocator;
+#[cfg(test)]
+extern crate rand;
+#[global_allocator]
+static ALLOC: jemallocator::Jemalloc = jemallocator::Jemalloc;

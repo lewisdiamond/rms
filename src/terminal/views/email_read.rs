@@ -1,7 +1,6 @@
 use crate::message::Message;
 use tui::backend::Backend;
-use tui::layout::{Alignment, Rect};
-use tui::layout::{Constraint, Direction, Layout};
+use tui::layout::Rect;
 use tui::style::{Modifier, Style};
 use tui::widgets::{Block, Borders, Paragraph, Text, Widget};
 use tui::Frame;
@@ -19,7 +18,7 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, message: &Message, scroll: u16) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .title_style(Style::default().modifier(Modifier::Bold));
+        .title_style(Style::default().modifier(Modifier::BOLD));
     Paragraph::new(text.iter())
         .block(block.clone())
         .wrap(true)

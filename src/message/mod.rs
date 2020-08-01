@@ -1,16 +1,16 @@
 use crate::readmail;
 use crate::readmail::html2text;
 use chrono::prelude::*;
-use html2text::from_read;
-use log::{debug, error};
-use maildir::MailEntry;
-use mailparse::{dateparse, ParsedMail};
+use maildir::{MailEntry, ParsedMailEntry};
+use mailparse::{dateparse, parse_mail, ParsedMail};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::collections::HashSet;
 use std::convert::AsRef;
+use std::path::{Path, PathBuf};
 use std::string::ToString;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Mime {
     PlainText,
     Html,
@@ -39,7 +39,7 @@ impl Mime {
         }
     }
 }
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Body {
     pub mime: Mime,
     pub value: String,
@@ -57,7 +57,7 @@ impl Body {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
     pub body: Vec<Body>,
@@ -65,8 +65,16 @@ pub struct Message {
     pub from: String,
     pub recipients: Vec<String>,
     pub date: u64,
-    pub original: Option<String>,
+    pub original: Vec<u8>,
     pub tags: HashSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShortMessage {
+    pub id: String,
+    pub subject: String,
+    pub from: String,
+    pub date: u64,
 }
 
 pub struct MessageBuilder {
@@ -76,12 +84,19 @@ pub struct MessageBuilder {
     recipients: Option<Vec<String>>,
     date: Option<u64>,
     id: Option<String>,
+    original: Option<Vec<u8>>,
 }
 
 pub fn get_id(data: &Vec<u8>) -> String {
-    let mut hasher = Sha512::default();
-    hasher.input(data);
-    format!("{:x}", hasher.result())
+    format!("{:x}", Sha512::digest(data))
+}
+
+impl ToString for ShortMessage {
+    fn to_string(&self) -> String {
+        let dt = Local.timestamp(self.date as i64, 0);
+        let dstr = dt.format("%a %b %e %T %Y").to_string();
+        format!("{}: [{}] {}", dstr, self.from, self.subject.as_str())
+    }
 }
 
 impl ToString for Message {
@@ -119,8 +134,20 @@ pub struct MessageError {
     pub message: String,
 }
 
+impl MessageError {
+    pub fn from(msg: &str) -> Self {
+        MessageError {
+            message: String::from(msg),
+        }
+    }
+}
+
 impl Message {
-    pub fn from_parsedmail(mut msg: &mut ParsedMail, id: String) -> Result<Self, MessageError> {
+    pub fn from_parsedmail(
+        msg: &ParsedMail,
+        id: String,
+        original: Vec<u8>,
+    ) -> Result<Self, MessageError> {
         let headers = &msg.headers;
         let mut subject: String = "".to_string();
         let mut from: String = "".to_string();
@@ -128,35 +155,29 @@ impl Message {
         let default_date = 0;
         let mut date = default_date;
         for h in headers {
-            if let Ok(s) = h.get_key() {
-                match s.as_ref() {
-                    "Subject" => subject = h.get_value().unwrap_or("".to_string()),
-                    "From" => from = h.get_value().unwrap_or("".to_string()),
-                    "To" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                    "cc" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                    "bcc" => recipients.push(h.get_value().unwrap_or("".to_string())),
-                    "Received" | "Date" => {
-                        if date == default_date {
-                            let date_str = h.get_value();
-                            match date_str {
-                                Ok(date_str) => {
-                                    for ts in date_str.rsplit(';') {
-                                        date = match dateparse(ts) {
-                                            Ok(d) => d,
-                                            Err(_) => default_date,
-                                        };
-                                        break;
-                                    }
-                                }
-                                Err(_) => (),
-                            }
+            let key = h.get_key();
+            match key.as_ref() {
+                "Subject" => subject = h.get_value(),
+                "From" => from = h.get_value(),
+                "To" => recipients.push(h.get_value()),
+                "cc" => recipients.push(h.get_value()),
+                "bcc" => recipients.push(h.get_value()),
+                "Received" | "Date" => {
+                    if date == default_date {
+                        let date_str = h.get_value();
+                        for ts in date_str.rsplit(';') {
+                            date = match dateparse(ts) {
+                                Ok(d) => d,
+                                Err(_) => default_date,
+                            };
+                            break;
                         }
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
-        let bodies = readmail::extract_body(&mut msg, false);
+        let bodies = readmail::extract_body(&msg, false);
         Ok(Message {
             body: bodies,
             from,
@@ -164,21 +185,29 @@ impl Message {
             recipients,
             date: date as u64,
             id,
-            original: None,
+            original,
             tags: HashSet::new(),
         })
     }
-    pub fn from_mailentry(mailentry: &mut MailEntry) -> Result<Self, MessageError> {
-        let hash = get_id(mailentry.data().expect("Unable to read the actual data"));
+    pub fn from_data(data: Vec<u8>) -> Result<Self, MessageError> {
+        let id = get_id(data.as_ref());
+        let parsed_mail = parse_mail(data.as_slice()).map_err(|_| MessageError {
+            message: String::from("Unable to parse email data"),
+        })?;
+        Self::from_parsedmail(&parsed_mail, id, data.clone())
+    }
+    pub fn from_mailentry(mailentry: MailEntry) -> Result<Self, MessageError> {
+        let id = mailentry.id();
+        mailentry.read_data().map_err(|e| MessageError {
+            message: format!("Failed to parse email id {}", id),
+        })?;
+        let data = mailentry.data().ok_or(MessageError {
+            message: format!("Mail {} could not read data", id),
+        })?;
         match mailentry.parsed() {
-            Ok(mut msg) => Self::from_parsedmail(&mut msg, hash),
+            Ok(parsed) => Self::from_parsedmail(&parsed, String::from(id), data.clone()),
             Err(e) => Err(MessageError {
-                message: format!(
-                    "Failed on {}:{} -- MailEntryError: {}",
-                    mailentry.id(),
-                    hash,
-                    e
-                ),
+                message: format!("Failed to parse email id {}", id),
             }),
         }
     }
@@ -231,6 +260,10 @@ impl MessageBuilder {
         self.recipients = Some(recipients.split(",").map(|s| String::from(s)).collect());
         self
     }
+    fn original(mut self, original: Vec<u8>) -> Self {
+        self.original = Some(original);
+        self
+    }
     fn build(self) -> Message {
         let msg = "Missing field for Message";
 
@@ -244,7 +277,7 @@ impl MessageBuilder {
             subject: self.subject.expect(msg),
             recipients: self.recipients.expect(msg),
             date: self.date.expect(msg),
-            original: None,
+            original: self.original.expect(msg),
             tags: HashSet::new(),
         }
     }

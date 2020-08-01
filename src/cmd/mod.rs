@@ -18,6 +18,7 @@ pub fn expand_path(input: &OsStr) -> PathBuf {
 pub enum OutputType {
     Short,
     Full,
+    Raw,
 }
 
 #[derive(Debug)]
@@ -49,6 +50,7 @@ impl FromStr for OutputType {
         match input.to_lowercase().as_str() {
             "short" => Ok(OutputType::Short),
             "full" => Ok(OutputType::Full),
+            "raw" => Ok(OutputType::Raw),
             _ => Err(OutputTypeError::UnknownTypeError),
         }
     }
@@ -64,7 +66,7 @@ impl FromStr for OutputType {
 )]
 pub struct Opt {
     #[structopt(
-        parse(from_os_str = "expand_path"),
+        parse(from_os_str = expand_path),
         short,
         long,
         env = "RMS_CONFIG_PATH",
@@ -73,7 +75,7 @@ pub struct Opt {
     pub config: PathBuf,
 
     #[structopt(
-        parse(from_os_str = "expand_path"),
+        parse(from_os_str = expand_path),
         short,
         long,
         env = "RMS_INDEX_DIR_PATH"
@@ -89,7 +91,7 @@ pub enum Command {
     #[structopt(name = "index", rename_all = "kebab-case")]
     Index {
         #[structopt(
-            parse(from_os_str = "expand_path"),
+            parse(from_os_str = expand_path),
             short,
             long,
             required = true,
@@ -117,11 +119,10 @@ pub enum Command {
 
     #[structopt(rename_all = "kebab-case")]
     Get {
-        #[structopt(short, long)]
-        id: String,
-
         #[structopt(short, long, default_value = "short")]
         output: OutputType,
+
+        id: String,
     },
 
     #[structopt(rename_all = "kebab-case")]

@@ -6,15 +6,16 @@ mod _impl;
 use _impl::rocksdb;
 use _impl::tantivy;
 use std::fmt;
-mod message_store;
+pub mod message_store;
 use message_store::MessageStore;
+use std::time::Instant;
 
 pub enum Searchers {
     Tantivy(PathBuf),
 }
 pub enum Storages {
-    Tantivy(PathBuf),
     Rocksdb(PathBuf),
+    Tantivy(PathBuf),
 }
 
 pub struct MessageStoreBuilder {
@@ -51,7 +52,7 @@ impl MessageStoreBuilder {
         }
     }
 
-    pub fn new_from_cfg(pathbuf: PathBuf) -> MessageStoreBuilder {
+    pub fn new_from_cfg(_pathbuf: PathBuf) -> MessageStoreBuilder {
         unimplemented!();
     }
 
@@ -74,24 +75,31 @@ impl MessageStoreBuilder {
         self.storage = Some(storage);
         self
     }
+    pub fn maildir(&mut self, path: PathBuf) -> &mut Self {
+        self.maildir_path = Some(path);
+        self
+    }
 
-    pub fn build(&self) -> Result<Box<IMessageStore>, MessageStoreBuilderError> {
-        let store = match &self.storage {
-            None => Err(MessageStoreBuilderError::CouldNotCreateStoreError(
-                "No store type was provided".to_string(),
-            )),
-            Some(store_type) => match store_type {
-                Storages::Tantivy(path) => match self.read_only {
-                    true => Ok(tantivy::TantivyStore::new_ro(std::path::PathBuf::from(
-                        path,
-                    ))),
-                    false => Ok(tantivy::TantivyStore::new(std::path::PathBuf::from(path))),
-                },
-                Storages::Rocksdb => Err(MessageStoreBuilderError::CouldNotCreateStoreError(
-                    "Rocksdb is not yet supported, try again later".to_string(),
-                )),
-            },
-        }?;
+    pub fn build(&self) -> Result<impl IMessageStore, MessageStoreBuilderError> {
+        //let storage: Result<Option<Box<dyn IMessageStorage>>, MessageStoreBuilderError> =
+        //    match &self.storage {
+        //        None => Ok(None),
+        //        Some(store_type) => match store_type {
+        //            Storages::Rocksdb(path) => {
+        //                let mut p = path.clone();
+        //                p.push("storage");
+        //                Ok(Some(Box::new(rocksdb::RocksDBStore::new(p))))
+        //            }
+        //            Storages::Tantivy(path) => {
+        //                let mut p = path.clone();
+        //                p.push("storage");
+        //                tantivy = Some(tantivy::TantivyStore::new(
+        //                    std::path::PathBuf::from(p),
+        //                ));
+        //                Ok(Box::new(tantivy))
+        //            }
+        //        };
+        //        },
 
         let searcher = match &self.searcher {
             None => Err(MessageStoreBuilderError::CouldNotCreateStoreError(
@@ -99,17 +107,14 @@ impl MessageStoreBuilder {
             )),
             Some(searcher_type) => match searcher_type {
                 Searchers::Tantivy(path) => {
-                    Ok(tantivy::TantivyStore::new(std::path::PathBuf::from(path)))
+                    let mut p = path.clone();
+                    p.push("searcher");
+                    Ok(tantivy::TantivyStore::new(std::path::PathBuf::from(p)))
                 }
             },
-        }?;
+        };
 
-        Ok(Box::new(MessageStore::<
-            tantivy::TantivyStore,
-            tantivy::TantivyStore,
-        >::new(
-            Box::new(searcher), Box::new(store), !self.debug
-        )))
+        Ok(MessageStore::new(Box::new(searcher?), None, !self.debug))
     }
 }
 
@@ -118,7 +123,9 @@ pub enum MessageStoreError {
     CouldNotAddMessage(String),
     CouldNotOpenMaildir(String),
     CouldNotModifyMessage(String),
+    CouldNotGetMessage(String),
     CouldNotGetMessages(Vec<String>),
+    CouldNotConvertMessage(String),
     InvalidQuery(String),
 }
 
@@ -134,7 +141,11 @@ impl fmt::Display for MessageStoreError {
             MessageStoreError::CouldNotGetMessages(s) => {
                 format!("Could not get messages {}", s.join(", "))
             }
+            MessageStoreError::CouldNotGetMessage(s) => format!("Could not get message {}", s),
             MessageStoreError::InvalidQuery(s) => format!("Could query message {}", s),
+            MessageStoreError::CouldNotConvertMessage(s) => {
+                format!("Could not convert message {}", s)
+            }
         };
         write!(f, "Message Store Error {}", msg)
     }
@@ -147,37 +158,24 @@ pub trait IMessageSearcher {
         parsed_body: String,
     ) -> Result<String, MessageStoreError>;
     fn search_fuzzy(&self, query: String, num: usize) -> Result<Vec<Message>, MessageStoreError>;
-    fn search_by_date(
-        &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
-    ) -> Result<Vec<Message>, MessageStoreError>;
 
-    fn delete_message(&mut self, msg: Message) -> Result<(), MessageStoreError>;
-    fn tag_message_id(
-        &mut self,
-        id: String,
-        tags: HashSet<String>,
-    ) -> Result<usize, MessageStoreError>;
-    fn tag_message(
-        &mut self,
-        msg: Message,
-        tags: HashSet<String>,
-    ) -> Result<usize, MessageStoreError>;
+    fn delete_message(&mut self, msg: &Message) -> Result<(), MessageStoreError>;
 
-    fn get_messages_page(
-        &self,
-        start: Message,
-        num: usize,
-    ) -> Result<Vec<Message>, MessageStoreError>;
     fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError>;
     fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError>;
     fn finish_indexing_process(&mut self) -> Result<(), MessageStoreError>;
+    fn latest(&mut self, num: usize) -> Result<Vec<Message>, MessageStoreError>;
+    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError>;
+    fn get_messages_page(
+        &self,
+        start: usize,
+        num: usize,
+    ) -> Result<Vec<Message>, MessageStoreError>;
 }
 
 pub trait IMessageStorage {
-    fn get_message(&self, id: String) -> Result<Message, MessageStoreError>;
-    fn add_message(&mut self, msg: Message) -> Result<String, MessageStoreError>;
+    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError>;
+    fn add_message(&mut self, msg: &Message) -> Result<String, MessageStoreError>;
     fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError>;
     fn delete_message(&mut self, msg: Message) -> Result<(), MessageStoreError>;
     fn get_messages_page(
@@ -193,7 +191,7 @@ pub trait IMessageStorage {
 }
 
 pub trait IMessageStore {
-    fn get_message(&self, id: String) -> Result<Message, MessageStoreError>;
+    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError>;
     fn add_message(
         &mut self,
         msg: Message,

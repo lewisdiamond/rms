@@ -1,9 +1,8 @@
 use crate::terminal::store::Store;
-use std::io;
-use tui::backend::{Backend, TermionBackend};
-use tui::layout::{Constraint, Direction, Layout, Rect};
+use tui::backend::Backend;
+use tui::layout::Rect;
 use tui::style::{Color, Modifier, Style};
-use tui::widgets::{Block, Borders, List, SelectableList, Text, Widget};
+use tui::widgets::{Block, Borders, SelectableList, Widget};
 use tui::Frame;
 
 pub fn draw<B: Backend>(f: &mut Frame<B>, area: Rect, store: &Store) {
@@ -23,7 +22,7 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, area: Rect, store: &Store) {
         )
         .select(Some(store.list_store.selected))
         .style(style)
-        .highlight_style(style.fg(Color::LightGreen).modifier(Modifier::Bold))
+        .highlight_style(style.fg(Color::LightGreen).modifier(Modifier::BOLD))
         .highlight_symbol(">")
         .render(f, area);
 }
