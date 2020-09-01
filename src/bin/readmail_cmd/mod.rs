@@ -5,12 +5,12 @@ use structopt::clap::{App, Arg};
 
 fn expand_path(input_str: &str) -> PathBuf {
     let expanded = shellexpand::full(input_str)
-        .expect(format!("Unable to expand {}", input_str).as_str())
+        .unwrap_or_else(|_| panic!("Unable to expand {}", input_str))
         .into_owned();
-    return PathBuf::from(expanded);
+    PathBuf::from(expanded)
 }
 
-pub fn source() -> Box<BufRead> {
+pub fn source() -> Box<dyn BufRead> {
     let matches = App::new("Read Mail")
         .version("0.0.1")
         .author("Lewis Diamond <rms@lewisdiamond.com")

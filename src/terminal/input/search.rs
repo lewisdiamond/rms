@@ -31,36 +31,30 @@ impl Runnable for SearchRunner {
                         store.search_store.set_search("".to_string());
                         true
                     }
-                    _ => {
-                        return false;
-                    }
+                    _ => false,
                 },
-                _ => {
-                    return false;
-                }
+                _ => false,
             }
         } else {
             match e {
                 Event::Input(key) => match key {
                     Key::Char('/') => {
                         store.search_store.enable_search();
-                        return true;
+                        true
                     }
-                    _ => {
-                        return false;
-                    }
+                    _ => false,
                 },
-                _ => return false,
+                _ => false,
             }
         }
     }
 }
 
-pub fn handler() -> Box<InputHandler> {
-    Box::new(InputHandler {
+pub fn handler() -> InputHandler {
+    InputHandler {
         name: String::from("Search"),
         pre: true,
         f: Box::new(SearchRunner {}),
         children: vec![],
-    })
+    }
 }

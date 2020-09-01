@@ -8,8 +8,8 @@ mod search;
 pub struct InputHandler {
     pub name: String,
     pre: bool,
-    f: Box<Runnable>,
-    children: Vec<Box<InputHandler>>,
+    f: Box<dyn Runnable>,
+    children: Vec<InputHandler>,
 }
 
 #[derive(Debug)]
@@ -26,15 +26,11 @@ impl Runnable for CtrlCRunner {
             Event::Input(key) => match key {
                 Key::Ctrl('c') => {
                     store.exit = true;
-                    return true;
+                    true
                 }
-                _ => {
-                    return false;
-                }
+                _ => false,
             },
-            _ => {
-                return false;
-            }
+            _ => false,
         }
     }
 }
@@ -46,15 +42,11 @@ impl Runnable for QExitRunner {
             Event::Input(key) => match key {
                 Key::Char('q') => {
                     store.exit = true;
-                    return true;
+                    true
                 }
-                _ => {
-                    return false;
-                }
+                _ => false,
             },
-            _ => {
-                return false;
-            }
+            _ => false,
         }
     }
 }
@@ -76,7 +68,7 @@ pub trait Runnable {
 }
 
 impl InputHandler {
-    pub fn new(name: String, children: Vec<Box<InputHandler>>) -> InputHandler {
+    pub fn new(name: String, children: Vec<InputHandler>) -> InputHandler {
         Self {
             name,
             f: Box::new(CtrlCRunner {}),
@@ -84,13 +76,13 @@ impl InputHandler {
             children,
         }
     }
-    pub fn new_single(name: String, f: Box<Runnable>, pre: bool) -> Box<InputHandler> {
-        Box::new(Self {
+    pub fn new_single(name: String, f: Box<dyn Runnable>, pre: bool) -> InputHandler {
+        Self {
             name,
             f,
             pre,
             children: vec![],
-        })
+        }
     }
     fn input(&self, e: &Event<Key>, store: &mut Store) -> bool {
         if self.pre {

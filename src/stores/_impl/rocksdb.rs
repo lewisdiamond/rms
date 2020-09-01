@@ -1,28 +1,21 @@
-use crate::message::{Message, ShortMessage};
+use crate::message::Message;
 use crate::stores::{IMessageStorage, MessageStoreError};
 use chrono::{DateTime, Utc};
 use rocksdb::{DBCompactionStyle, DBCompressionType};
-use rocksdb::{DBVector, Options, DB};
-use serde_json::Result as SResult;
-use std::collections::HashSet;
+use rocksdb::{Options, DB};
 use std::path::Path;
 use std::string::ToString;
 
 type RocksDBMessage = Message;
 impl RocksDBMessage {
-    fn from_rocksdb(msg: DBVector) -> Result<RocksDBMessage, MessageStoreError> {
-        let msg_r = msg
-            .to_utf8()
-            .ok_or(Err(MessageStoreError::CouldNotGetMessage(
-                "Message is malformed in some way".to_string(),
-            )));
+    fn from_rocksdb(msg: Vec<u8>) -> Result<RocksDBMessage, MessageStoreError> {
+        let msg = String::from_utf8(msg).map_err(|_| {
+            MessageStoreError::CouldNotGetMessage("Message is malformed in some way".to_string())
+        })?;
 
-        match msg_r {
-            Ok(msg) => serde_json::from_str(msg).map_err(|e| {
-                MessageStoreError::CouldNotGetMessage("Unable to parse the value".to_string())
-            }),
-            Err(e) => e,
-        }
+        serde_json::from_str(&msg).map_err(|_| {
+            MessageStoreError::CouldNotGetMessage("Unable to parse the value".to_string())
+        })
     }
     fn to_rocksdb(&self) -> Result<(String, Vec<u8>), MessageStoreError> {
         let id = self.id.clone();
@@ -71,29 +64,30 @@ impl IMessageStorage for RocksDBStore {
             ))),
         }
     }
-    fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
+    fn update_message(&mut self, _msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!()
     }
-    fn delete_message(&mut self, msg: Message) -> Result<(), MessageStoreError> {
+    fn delete_message(&mut self, _msg: Message) -> Result<(), MessageStoreError> {
         unimplemented!()
     }
     fn get_messages_page(
         &self,
-        start: usize,
+        _start: usize,
         num: usize,
     ) -> Result<Vec<Message>, MessageStoreError> {
         Ok(self.latest(num))
     }
     fn get_by_date(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
     ) -> Result<Vec<Message>, MessageStoreError> {
         unimplemented!()
     }
 }
 
 impl RocksDBStore {
+    #[allow(dead_code)]
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         let mut opts = Options::default();
         opts.increase_parallelism(16);
@@ -156,8 +150,8 @@ mod test {
         fn drop(&mut self) {
             let opts = Options::default();
             let path = self.path.as_ref().unwrap();
-            DB::destroy(&opts, path);
-            std::fs::remove_dir_all(path);
+            DB::destroy(&opts, path).unwrap();
+            std::fs::remove_dir_all(path).unwrap();
         }
     }
     #[test]
@@ -191,6 +185,6 @@ mod test {
         let store = &StoreInit::new().store;
         store.db.put(b"key", b"value2").unwrap();
         let get = store.db.get(b"key").ok().unwrap().unwrap();
-        assert_eq!("value2", get.to_utf8().unwrap());
+        assert_eq!("value2", String::from_utf8(get).unwrap());
     }
 }

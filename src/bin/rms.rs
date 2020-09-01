@@ -1,12 +1,13 @@
 use log::{error, info, trace};
 use rms::cmd::{opts, Command, OutputType};
+use rms::message::{Body, Mime};
 use rms::stores::{IMessageStore, MessageStoreBuilder, Searchers, Storages};
 use rms::terminal;
 use std::collections::HashSet;
 use std::io::{self, Write};
-use std::time::Instant;
 
-fn main() {
+#[tokio::main]
+pub async fn main() {
     pretty_env_logger::init();
     let opt = opts();
     trace!("Using config file at {:?}", opt.config); //, index.maildir_path);
@@ -24,7 +25,7 @@ fn main() {
             }
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path))
                 .debug(debug)
                 .build();
             match message_store {
@@ -56,10 +57,9 @@ fn main() {
             //message_store.index_mails(full);
         }
         Command::Search { term, output, num } => {
-            let now = Instant::now();
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path))
                 .read_only()
                 .build();
 
@@ -79,6 +79,20 @@ fn main() {
                             let mut out = io::stdout();
                             for result in results {
                                 out.write_all(result.original.as_ref()).unwrap();
+                            }
+                        }
+                        OutputType::Html => {
+                            for m in results {
+                                println!(
+                                    "{}",
+                                    m.body
+                                        .iter()
+                                        .filter(|x| x.mime == Mime::Html)
+                                        .collect::<Vec<&Body>>()
+                                        .first()
+                                        .map(|b| b.value.clone())
+                                        .unwrap_or_else(|| "No body".to_string())
+                                );
                             }
                         }
                     }
@@ -102,7 +116,7 @@ fn main() {
         Command::Get { id, output } => {
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path))
                 .read_only()
                 .build();
 
@@ -133,7 +147,20 @@ fn main() {
                                         .body
                                         .first()
                                         .map(|b| b.value.clone())
-                                        .unwrap_or(String::from("No body"))
+                                        .unwrap_or_else(|| "No body".to_string())
+                                );
+                            }
+                            OutputType::Html => {
+                                println!(
+                                    "{}",
+                                    good_msg
+                                        .body
+                                        .iter()
+                                        .filter(|x| x.mime == Mime::Html)
+                                        .collect::<Vec<&Body>>()
+                                        .first()
+                                        .map(|b| b.value.clone())
+                                        .unwrap_or_else(|| "No body".to_string())
                                 );
                             }
                         },
@@ -150,7 +177,7 @@ fn main() {
         Command::Latest { num: _num } => {
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path))
                 .build();
             match message_store {
                 Ok(store) => {
@@ -170,13 +197,14 @@ fn main() {
         Command::Tag { id, tags } => {
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
+                .searcher(Searchers::Tantivy(index_dir_path))
                 .build();
             match message_store {
                 Ok(mut store) => {
-                    match store.tag_message_id(id, tags.into_iter().collect::<HashSet<String>>()) {
-                        Err(e) => error!("{}", e),
-                        Ok(_) => {}
+                    if let Err(e) =
+                        store.tag_message_id(id, tags.into_iter().collect::<HashSet<String>>())
+                    {
+                        error!("{}", e)
                     }
                 }
                 Err(e) => error!("{}", e),

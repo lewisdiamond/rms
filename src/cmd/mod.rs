@@ -9,9 +9,9 @@ pub fn expand_path(input: &OsStr) -> PathBuf {
         .to_str()
         .expect("Unable to expand the given path. Can't convert input to &str.");
     let expanded = shellexpand::full(input_str)
-        .expect(format!("Unable to expand {}", input_str).as_str())
+        .unwrap_or_else(|_| panic!("Unable to expand {}", input_str))
         .into_owned();
-    return PathBuf::from(expanded);
+    PathBuf::from(expanded)
 }
 
 #[derive(Debug)]
@@ -19,6 +19,7 @@ pub enum OutputType {
     Short,
     Full,
     Raw,
+    Html,
 }
 
 #[derive(Debug)]
@@ -38,7 +39,7 @@ impl std::error::Error for OutputTypeError {
         "invalid first item to double"
     }
 
-    fn cause(&self) -> Option<&error::Error> {
+    fn cause(&self) -> Option<&dyn error::Error> {
         // Generic error, underlying cause isn't tracked.
         None
     }
@@ -51,6 +52,7 @@ impl FromStr for OutputType {
             "short" => Ok(OutputType::Short),
             "full" => Ok(OutputType::Full),
             "raw" => Ok(OutputType::Raw),
+            "html" => Ok(OutputType::Html),
             _ => Err(OutputTypeError::UnknownTypeError),
         }
     }

@@ -1,30 +1,26 @@
-use crate::stores::{IMessageSearcher, IMessageStorage, MessageStoreError};
-use chrono::{DateTime, Utc};
+use crate::message::{Message, MessageError};
+use crate::stores::{IMessageSearcher, MessageStoreError};
 use log::info;
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::panic;
-use std::time::Instant;
-
-use crate::message::{Body, Message, Mime};
 use std::path::PathBuf;
 use std::string::ToString;
-use tantivy;
-use tantivy::collector::{Count, TopDocs};
+use tantivy::collector::TopDocs;
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, RangeQuery, TermQuery};
+use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, TermQuery};
 use tantivy::schema::*;
 const BYTES_IN_MB: usize = 1024 * 1024;
 
 pub type TantivyMessage = Message;
 
 pub trait TantivyFrom<T> {
-    fn from_tantivy(doc: Document, schema: &EmailSchema) -> T;
+    fn from_tantivy(doc: Document, schema: &EmailSchema) -> Result<T, MessageError>;
 }
 
 impl TantivyFrom<TantivyMessage> for TantivyMessage {
-    fn from_tantivy(doc: Document, schema: &EmailSchema) -> TantivyMessage {
+    fn from_tantivy(doc: Document, schema: &EmailSchema) -> Result<TantivyMessage, MessageError> {
         let original: Result<Vec<u8>, _> = match doc
             .get_first(schema.original)
             .expect("Unable to get original message")
@@ -33,55 +29,15 @@ impl TantivyFrom<TantivyMessage> for TantivyMessage {
             _ => Err("Missing original email from the index"),
         };
 
-        let tags: HashSet<String> = doc
+        let _tags: HashSet<String> = doc
             .get_all(schema.tag)
             .into_iter()
             .filter_map(|s| s.text())
-            .map(|s| String::from(s))
+            .map(String::from)
             .collect();
-        TantivyMessage {
-            id: doc
-                .get_first(schema.id)
-                .expect("Message without an id")
-                .text()
-                .expect("Message ID is always a string")
-                .to_string(),
-            from: String::from(
-                doc.get_first(schema.from)
-                    .expect("Message without from")
-                    .text()
-                    .expect("Message with non-text from"),
-            ),
-            subject: String::from(
-                doc.get_first(schema.subject)
-                    .expect("Message without subject")
-                    .text()
-                    .expect("Message with non-text subject"),
-            ),
-            date: doc
-                .get_first(schema.date)
-                .map_or(0, |v: &tantivy::schema::Value| v.u64_value()),
-            recipients: doc
-                .get_first(schema.recipients)
-                .unwrap_or(&tantivy::schema::Value::Str(String::from("a")))
-                .text()
-                .expect("Message with non-text recipients")
-                .split(",")
-                .map(|s| String::from(s))
-                .collect(),
-            body: vec![Body {
-                mime: Mime::PlainText,
-                value: String::from(
-                    doc.get_first(schema.body)
-                        .expect("Message without body")
-                        .text()
-                        .expect("Message with non-text body"),
-                ),
-            }],
-
-            original: original.expect("Original was missing from the index"),
-            tags,
-        }
+        TantivyMessage::from_data(
+            original.map_err(|_| MessageError::from("Could not read original from index"))?,
+        )
     }
 }
 
@@ -91,6 +47,7 @@ pub struct EmailSchema {
     body: Field,
     from: Field,
     recipients: Field,
+    #[allow(dead_code)]
     thread: Field,
     id: Field,
     date: Field,
@@ -157,7 +114,7 @@ impl IMessageSearcher for TantivyStore {
         match writer {
             Some(writer) => match writer.commit() {
                 Ok(_) => Ok(()),
-                Err(e) => Err(MessageStoreError::CouldNotAddMessage(
+                Err(_) => Err(MessageStoreError::CouldNotAddMessage(
                     "Failed to commit to index".to_string(),
                 )),
             },
@@ -181,10 +138,10 @@ impl IMessageSearcher for TantivyStore {
     ) -> Result<Vec<TantivyMessage>, MessageStoreError> {
         Ok(self.search(query.as_str(), num))
     }
-    fn delete_message(&mut self, msg: &Message) -> Result<(), MessageStoreError> {
+    fn delete_message(&mut self, _msg: &Message) -> Result<(), MessageStoreError> {
         Ok(())
     }
-    fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
+    fn update_message(&mut self, _msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!();
     }
 
@@ -207,7 +164,7 @@ impl TantivyStore {
     pub fn new(path: PathBuf) -> Self {
         Self::_new(path, false)
     }
-    fn _new(path: PathBuf, ro: bool) -> Self {
+    fn _new(path: PathBuf, _ro: bool) -> Self {
         let email = EmailSchema::default();
         let index = TantivyStore::open_or_create_index(path, email.schema.clone());
         let reader = index
@@ -222,22 +179,21 @@ impl TantivyStore {
             mem_per_thread: None,
         }
     }
-    pub fn new_ro(path: PathBuf) -> Self {
+    pub fn _new_ro(path: PathBuf) -> Self {
         Self::_new(path, true)
     }
 
     fn open_or_create(path: PathBuf, schema: Schema) -> tantivy::Index {
-        tantivy::Index::open_or_create(MmapDirectory::open(path).unwrap(), schema.clone()).unwrap()
+        tantivy::Index::open_or_create(MmapDirectory::open(path).unwrap(), schema).unwrap()
     }
 
     fn open_or_create_index(path: PathBuf, schema: Schema) -> tantivy::Index {
-        fs::create_dir_all(path.as_path()).expect(
-            format!(
+        fs::create_dir_all(path.as_path()).unwrap_or_else(|_| {
+            panic!(
                 "Unable to create or access the given index directory {}",
                 path.to_str().unwrap()
             )
-            .as_str(),
-        );
+        });
         TantivyStore::open_or_create(path, schema)
     }
 
@@ -262,7 +218,7 @@ impl TantivyStore {
                     .iter()
                     .for_each(|t| document.add_text(email.tag, t.as_str()));
                 indexer.add_document(document);
-                Ok(msg.id.clone())
+                Ok(msg.id)
             }
             None => Err(MessageStoreError::CouldNotAddMessage(
                 "No indexer was allocated".to_string(),
@@ -274,7 +230,7 @@ impl TantivyStore {
         match writer {
             Some(indexer) => {
                 let term = Term::from_field_text(self.email.id, msg.id.as_ref());
-                indexer.delete_term(term.clone());
+                indexer.delete_term(term);
                 Ok(())
             }
             None => Err(MessageStoreError::CouldNotModifyMessage(
@@ -282,11 +238,15 @@ impl TantivyStore {
             )),
         }
     }
-    pub fn _tag_doc(&self, doc: Document, tags: Vec<String>) -> Result<(), tantivy::TantivyError> {
+    pub fn _tag_doc(&self, doc: Document, _tags: Vec<String>) -> Result<(), tantivy::TantivyError> {
         let mut writer = self.get_index_writer(1).ok().unwrap();
-        let id = TantivyMessage::from_tantivy(doc, &self.email).id;
+        let id = TantivyMessage::from_tantivy(doc, &self.email)
+            .map_err(|_| {
+                tantivy::TantivyError::SystemError(String::from("Can't read message from index"))
+            })?
+            .id;
         let term = Term::from_field_text(self.email.id, id.as_ref());
-        writer.delete_term(term.clone());
+        writer.delete_term(term);
         writer.commit()?;
         self.reader.reload()
     }
@@ -299,10 +259,7 @@ impl TantivyStore {
             Some(threads) => threads,
             None => cmp::min(
                 (num_cpus::get() as f32 / 1.5).floor() as usize,
-                cmp::max(
-                    1,
-                    (0.0818598 * (num_emails as f32).powf(0.31154938)) as usize,
-                ),
+                cmp::max(1, (0.0818598 * (num_emails as f32).powf(0.311549)) as usize),
             ),
         };
         let mem_per_thread = match self.mem_per_thread {
@@ -313,7 +270,7 @@ impl TantivyStore {
                         cmp::min(
                             mem_info.avail as usize * 1024 / (num_cpu + 1),
                             cmp::max(
-                                (0.41268337 * (num_emails as f32).powf(0.67270258)) as usize
+                                (0.41268337 * (num_emails as f32).powf(0.672702)) as usize
                                     * BYTES_IN_MB,
                                 200 * BYTES_IN_MB,
                             ),
@@ -335,7 +292,7 @@ impl TantivyStore {
             .writer_with_num_threads(num_cpu, mem_per_thread * num_cpu)
         {
             Ok(index_writer) => Ok(index_writer),
-            Err(e) => Err(MessageStoreError::CouldNotAddMessage(
+            Err(_) => Err(MessageStoreError::CouldNotAddMessage(
                 "Impossible to create the indexer".to_string(),
             )),
         }
@@ -353,14 +310,18 @@ impl TantivyStore {
                 &AllQuery,
                 &TopDocs::with_limit(num + skip).order_by_u64_field(self.email.date),
             )
-            .map_err(|e| MessageStoreError::CouldNotGetMessages(vec![]))?;
+            .map_err(|_| MessageStoreError::CouldNotGetMessages(vec![]))?;
         let mut ret = vec![];
         let page = docs
             .drain(skip..)
             .collect::<Vec<(u64, tantivy::DocAddress)>>();
         for doc in page {
             let retrieved_doc = searcher.doc(doc.1).unwrap();
-            ret.push(TantivyMessage::from_tantivy(retrieved_doc, &self.email));
+            ret.push(
+                TantivyMessage::from_tantivy(retrieved_doc, &self.email).map_err(|_| {
+                    MessageStoreError::CouldNotGetMessage("Message is corrupt".to_string())
+                })?,
+            );
         }
         Ok(ret)
     }
@@ -369,7 +330,7 @@ impl TantivyStore {
         // Is this needed? self.reader.load_searchers()?;
         let searcher = self.reader.searcher();
         let termq = TermQuery::new(
-            Term::from_field_text(self.email.id, id.as_ref()),
+            Term::from_field_text(self.email.id, id),
             IndexRecordOption::Basic,
         );
         let addr = searcher.search(&termq, &TopDocs::with_limit(1));
@@ -387,8 +348,8 @@ impl TantivyStore {
     pub fn _get_message(&self, id: &str) -> Option<TantivyMessage> {
         let doc = self.get_doc(id);
         match doc {
-            Ok(doc) => Some(TantivyMessage::from_tantivy(doc, &self.email)),
-            Err(_) => None,
+            Ok(doc) => TantivyMessage::from_tantivy(doc, &self.email).ok(),
+            _ => None,
         }
     }
     pub fn search(&self, text: &str, num: usize) -> Vec<TantivyMessage> {
@@ -401,11 +362,14 @@ impl TantivyStore {
         let mut ret = vec![];
         for doc in top_docs {
             let retrieved_doc = searcher.doc(doc.1).unwrap();
-            ret.push(TantivyMessage::from_tantivy(retrieved_doc, &self.email));
+            if let Ok(d) = TantivyMessage::from_tantivy(retrieved_doc, &self.email) {
+                ret.push(d);
+            }
         }
         ret
     }
 
+    #[allow(dead_code)]
     pub fn fuzzy(&self, text: &str, num: usize) -> Vec<TantivyMessage> {
         let mut terms = text.split(' ').collect::<Vec<&str>>();
         terms.insert(0, text);
@@ -413,7 +377,7 @@ impl TantivyStore {
         let mut ret = self.search(text, num);
         for n in 1..2 {
             if ret.len() < num {
-                let mut queries: Vec<(Occur, Box<Query>)> = vec![];
+                let mut queries: Vec<(Occur, Box<dyn Query>)> = vec![];
                 for (_, t) in terms.iter().enumerate() {
                     let term = Term::from_field_text(self.email.subject, t);
                     let term_body = Term::from_field_text(self.email.body, t);
@@ -427,7 +391,9 @@ impl TantivyStore {
                 let top_docs = searcher.search(&bquery, &top_docs_by_date).unwrap();
                 for doc in top_docs {
                     let retrieved_doc = searcher.doc(doc.1).unwrap();
-                    ret.push(TantivyMessage::from_tantivy(retrieved_doc, &self.email));
+                    if let Ok(d) = TantivyMessage::from_tantivy(retrieved_doc, &self.email) {
+                        ret.push(d);
+                    }
                 }
             }
         }

@@ -1,5 +1,5 @@
 extern crate select;
-use crate::message::{get_id, Body, Message, Mime};
+use crate::message::{Body, Mime};
 use log::debug;
 use mailparse::*;
 use select::document::Document;
@@ -23,24 +23,22 @@ pub fn extract_body(msg: &ParsedMail, prefer_html: bool) -> Vec<Body> {
     } else {
         Mime::PlainText
     };
-    let text = msg
-        .get_body()
-        .unwrap_or(msg.get_body_raw().map_or(String::from(""), |x| {
-            String::from_utf8(x).unwrap_or(String::from(""))
-        }));
-    let mime = Mime::from_str(&msg.ctype.mimetype);
+    let text = msg.get_body().unwrap_or_else(|_| {
+        msg.get_body_raw().map_or(String::from(""), |x| {
+            String::from_utf8(x).unwrap_or_else(|_| String::new())
+        })
+    });
+    let mime = msg.ctype.mimetype.parse::<Mime>().unwrap();
     let raw_body = Some(Body::new(mime, text));
 
     let mut bodies = msg
         .subparts
         .iter()
-        .map(|mut s| {
-            let mime = Mime::from_str(&s.ctype.mimetype);
+        .map(|s| {
+            let mime = s.ctype.mimetype.parse::<Mime>().unwrap();
             match mime {
-                Mime::PlainText | Mime::Html => {
-                    s.get_body().ok().map(|b| Body::new(mime, String::from(b)))
-                }
-                Mime::Nested => extract_body(&mut s, prefer_html).into_iter().next(),
+                Mime::PlainText | Mime::Html => s.get_body().ok().map(|b| Body::new(mime, b)),
+                Mime::Nested => extract_body(&s, prefer_html).into_iter().next(),
                 Mime::Unknown => {
                     debug!("unknown mime {}", mime.as_str());
                     None
@@ -53,7 +51,7 @@ pub fn extract_body(msg: &ParsedMail, prefer_html: bool) -> Vec<Body> {
         bodies.push(raw_body.expect("COULD NOT UNWRAP RAW_BODY"));
     }
     bodies.sort_unstable_by(|x, y| cmp_body(x, y, &prefered_mime));
-    if bodies.len() == 0 {
+    if bodies.is_empty() {
         println!(
             "No body for message: {}",
             msg.headers
@@ -70,7 +68,8 @@ pub fn html2text(text: &str) -> String {
     let document = Document::from(text);
     let text_nodes = document
         .find(Text)
-        .map(|x| x.text())
+        .map(|x| String::from(x.text().trim()))
+        .filter(|x| x.len() > 1)
         .collect::<Vec<String>>();
-    return text_nodes.join("\n\n");
+    text_nodes.join("\n\n")
 }

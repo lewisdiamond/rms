@@ -7,11 +7,11 @@ pub struct ListStore<'a> {
     pub page_size: usize,
     pub curr_idx: usize,
     pub fetched_first: bool,
-    pub message_store: &'a IMessageStore,
+    pub message_store: &'a dyn IMessageStore,
 }
 
 impl<'a> ListStore<'a> {
-    pub fn new(msg_store: &'a IMessageStore) -> ListStore<'a> {
+    pub fn new(msg_store: &'a dyn IMessageStore) -> ListStore<'a> {
         ListStore {
             messages: vec![],
             selected: 0,
@@ -40,7 +40,7 @@ impl<'a> ListStore<'a> {
     }
 
     pub fn prev_page(&mut self) -> &Self {
-        self.set_selected(-1 * self.page_size as i32);
+        self.set_selected(-(self.page_size as i32));
         self
     }
     pub fn set_selected(&mut self, offset: i32) -> &Self {
@@ -66,7 +66,7 @@ impl<'a> ListStore<'a> {
             .get_messages_page(self.curr_idx, page_size);
         match messages {
             Ok(messages) => self.messages = messages,
-            Err(e) => self.messages = vec![], // TODO Handle error
+            Err(_) => self.messages = vec![], // TODO Handle error
         }
     }
 }

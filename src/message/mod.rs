@@ -1,13 +1,13 @@
 use crate::readmail;
 use crate::readmail::html2text;
 use chrono::prelude::*;
-use maildir::{MailEntry, ParsedMailEntry};
+use maildir::MailEntry;
 use mailparse::{dateparse, parse_mail, ParsedMail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use std::collections::HashSet;
 use std::convert::AsRef;
-use std::path::{Path, PathBuf};
+use std::fmt;
 use std::string::ToString;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,20 +22,35 @@ impl Default for Mime {
         Mime::PlainText
     }
 }
-impl Mime {
-    pub fn as_str(&self) -> &str {
-        match self {
-            &Mime::PlainText => "text/plain",
-            &Mime::Html => "text/html",
-            _ => "Unknown Mime",
+impl std::str::FromStr for Mime {
+    type Err = std::convert::Infallible;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "text/plain" => Ok(Mime::PlainText),
+            "text/html" => Ok(Mime::Html),
+            "multipart/alternative" | "multipart/related" => Ok(Mime::Nested),
+            _ => Ok(Mime::Unknown),
         }
     }
-    pub fn from_str(s: &str) -> Mime {
-        match s {
-            "text/plain" => Mime::PlainText,
-            "text/html" => Mime::Html,
-            "multipart/alternative" | "multipart/related" => Mime::Nested,
-            _ => Mime::Unknown,
+}
+impl fmt::Display for Mime {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let msg = match self {
+            Self::PlainText => "PlainText",
+            Self::Html => "Html",
+            Self::Unknown => "Unknown",
+            Self::Nested => "Nested",
+        };
+        write!(f, "Mime:{}", msg)
+    }
+}
+
+impl Mime {
+    pub fn as_str(&self) -> &str {
+        match *self {
+            Mime::PlainText => "text/plain",
+            Mime::Html => "text/html",
+            _ => "Unknown Mime",
         }
     }
 }
@@ -76,7 +91,7 @@ pub struct ShortMessage {
     pub from: String,
     pub date: u64,
 }
-
+#[allow(dead_code)]
 pub struct MessageBuilder {
     body: Option<String>,
     subject: Option<String>,
@@ -87,7 +102,7 @@ pub struct MessageBuilder {
     original: Option<Vec<u8>>,
 }
 
-pub fn get_id(data: &Vec<u8>) -> String {
+pub fn get_id(data: &[u8]) -> String {
     format!("{:x}", Sha512::digest(data))
 }
 
@@ -103,13 +118,8 @@ impl ToString for Message {
     fn to_string(&self) -> String {
         let dt = Local.timestamp(self.date as i64, 0);
         let dstr = dt.format("%a %b %e %T %Y").to_string();
-        let tags = if self.tags.len() > 0 {
-            self.tags
-                .iter()
-                .map(|s| s.clone())
-                .collect::<Vec<String>>()
-                .join(",")
-                + " ||"
+        let tags = if self.tags.is_empty() {
+            self.tags.iter().cloned().collect::<Vec<String>>().join(",") + " ||"
         } else {
             String::from("")
         };
@@ -120,13 +130,6 @@ impl ToString for Message {
             self.from,
             self.subject.as_str()
         )
-    }
-}
-impl AsRef<str> for Message {
-    fn as_ref(&self) -> &str {
-        let dt = Local.timestamp(self.date as i64, 0);
-        let dstr = dt.format("%a %b %e %T %Y").to_string();
-        "aa" //self.to_string().as_ref()
     }
 }
 
@@ -143,11 +146,8 @@ impl MessageError {
 }
 
 impl Message {
-    pub fn from_parsedmail(
-        msg: &ParsedMail,
-        id: String,
-        original: Vec<u8>,
-    ) -> Result<Self, MessageError> {
+    pub fn from_parsedmail(msg: &ParsedMail, id: String) -> Result<Self, MessageError> {
+        let original = Vec::from(msg.data);
         let headers = &msg.headers;
         let mut subject: String = "".to_string();
         let mut from: String = "".to_string();
@@ -165,13 +165,16 @@ impl Message {
                 "Received" | "Date" => {
                     if date == default_date {
                         let date_str = h.get_value();
-                        for ts in date_str.rsplit(';') {
-                            date = match dateparse(ts) {
-                                Ok(d) => d,
-                                Err(_) => default_date,
-                            };
-                            break;
-                        }
+                        let date_str = date_str
+                            .rsplit(';')
+                            .collect::<Vec<&str>>()
+                            .first()
+                            .cloned()
+                            .unwrap_or("");
+                        date = match dateparse(date_str) {
+                            Ok(d) => d,
+                            Err(_) => default_date,
+                        };
                     }
                 }
                 _ => {}
@@ -194,25 +197,19 @@ impl Message {
         let parsed_mail = parse_mail(data.as_slice()).map_err(|_| MessageError {
             message: String::from("Unable to parse email data"),
         })?;
-        Self::from_parsedmail(&parsed_mail, id, data.clone())
+        Self::from_parsedmail(&parsed_mail, id)
     }
-    pub fn from_mailentry(mailentry: MailEntry) -> Result<Self, MessageError> {
-        let id = mailentry.id();
-        mailentry.read_data().map_err(|e| MessageError {
-            message: format!("Failed to parse email id {}", id),
-        })?;
-        let data = mailentry.data().ok_or(MessageError {
-            message: format!("Mail {} could not read data", id),
-        })?;
+    pub fn from_mailentry(mut mailentry: MailEntry) -> Result<Self, MessageError> {
+        let id = mailentry.id().to_owned();
         match mailentry.parsed() {
-            Ok(parsed) => Self::from_parsedmail(&parsed, String::from(id), data.clone()),
-            Err(e) => Err(MessageError {
+            Ok(parsed) => Self::from_parsedmail(&parsed, id),
+            Err(_) => Err(MessageError {
                 message: format!("Failed to parse email id {}", id),
             }),
         }
     }
     pub fn get_body(&self) -> &Body {
-        self.body.iter().next().unwrap()
+        self.body.get(0).unwrap()
     }
     pub fn to_long_string(&self) -> String {
         format!(
@@ -234,7 +231,7 @@ impl Message {
         )
     }
 }
-
+#[allow(dead_code)]
 impl MessageBuilder {
     fn body(mut self, body: String) -> Self {
         self.body = Some(body);
@@ -257,7 +254,7 @@ impl MessageBuilder {
         self
     }
     fn recipients(mut self, recipients: String) -> Self {
-        self.recipients = Some(recipients.split(",").map(|s| String::from(s)).collect());
+        self.recipients = Some(recipients.split(',').map(String::from).collect());
         self
     }
     fn original(mut self, original: Vec<u8>) -> Self {

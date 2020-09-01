@@ -3,12 +3,10 @@ use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::path::PathBuf;
 mod _impl;
-use _impl::rocksdb;
 use _impl::tantivy;
 use std::fmt;
 pub mod message_store;
 use message_store::MessageStore;
-use std::time::Instant;
 
 pub enum Searchers {
     Tantivy(PathBuf),
@@ -40,7 +38,11 @@ impl fmt::Display for MessageStoreBuilderError {
         }
     }
 }
-
+impl Default for MessageStoreBuilder {
+    fn default() -> Self {
+        MessageStoreBuilder::new()
+    }
+}
 impl MessageStoreBuilder {
     pub fn new() -> MessageStoreBuilder {
         MessageStoreBuilder {
@@ -109,7 +111,7 @@ impl MessageStoreBuilder {
                 Searchers::Tantivy(path) => {
                     let mut p = path.clone();
                     p.push("searcher");
-                    Ok(tantivy::TantivyStore::new(std::path::PathBuf::from(p)))
+                    Ok(tantivy::TantivyStore::new(p))
                 }
             },
         };

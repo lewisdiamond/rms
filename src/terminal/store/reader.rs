@@ -5,11 +5,11 @@ use std::cmp::max;
 pub struct ReaderStore<'a> {
     pub message: Option<Message>,
     pub scroll: u16,
-    pub storage: &'a IMessageStore,
+    pub storage: &'a dyn IMessageStore,
 }
 
 impl<'a> ReaderStore<'a> {
-    pub fn new(storage: &'a IMessageStore) -> ReaderStore<'a> {
+    pub fn new(storage: &'a dyn IMessageStore) -> ReaderStore<'a> {
         ReaderStore {
             message: None,
             scroll: 0,

@@ -1,13 +1,12 @@
 use crate::message::Message;
 use tui::backend::Backend;
 use tui::layout::Rect;
-use tui::style::{Modifier, Style};
-use tui::widgets::{Block, Borders, Paragraph, Text, Widget};
+use tui::text::Text;
+use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Frame;
 
 pub fn draw<B: Backend>(f: &mut Frame<B>, message: &Message, scroll: u16) {
     let text = message.to_long_string();
-    let text = [Text::raw(text)];
     let f_r = f.size();
     let rect = Rect {
         x: f_r.x + f_r.width / 2 - 40,
@@ -16,16 +15,14 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, message: &Message, scroll: u16) {
         height: f_r.height,
     };
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .title_style(Style::default().modifier(Modifier::BOLD));
-    Paragraph::new(text.iter())
+    let block = Block::default().borders(Borders::ALL);
+    let p = Paragraph::new(Text::from(text.as_str()))
         .block(block.clone())
-        .wrap(true)
-        .scroll(scroll)
-        .render(f, rect);
+        .wrap(Wrap { trim: true })
+        .scroll((scroll, 0));
+    f.render_widget(p, rect);
 
-    Paragraph::new([Text::raw(format!("scroll {}", scroll))].iter())
-        .wrap(true)
-        .render(f, Rect::new(0, 0, 100, 2));
+    let p2_str = format!("scroll {}", scroll);
+    let p2 = Paragraph::new(Text::from(p2_str.as_str())).wrap(Wrap { trim: true });
+    f.render_widget(p2, Rect::new(0, 0, 100, 2));
 }

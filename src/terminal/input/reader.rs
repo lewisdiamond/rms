@@ -48,11 +48,11 @@ impl Runnable for ReaderRunner {
     }
 }
 
-pub fn handler() -> Box<InputHandler> {
-    Box::new(InputHandler {
+pub fn handler() -> InputHandler {
+    InputHandler {
         name: String::from("Reader"),
         pre: true,
         f: Box::new(ReaderRunner {}),
         children: vec![],
-    })
+    }
 }

@@ -1,4 +1,4 @@
-use crate::message::{Message, ShortMessage};
+use crate::message::Message;
 use crate::stores::{IMessageSearcher, IMessageStorage, IMessageStore, MessageStoreError};
 use chrono::{DateTime, Utc};
 use log::error;
@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 pub struct MessageStore {
     pub searcher: Box<dyn IMessageSearcher>,
@@ -37,21 +37,21 @@ impl IMessageStore for MessageStore {
     }
     fn tag_message_id(
         &mut self,
-        id: String,
-        tags: HashSet<String>,
+        _id: String,
+        _tags: HashSet<String>,
     ) -> Result<usize, MessageStoreError> {
         unimplemented!();
     }
 
     fn tag_message(
         &mut self,
-        msg: Message,
-        tags: HashSet<String>,
+        _msg: Message,
+        _tags: HashSet<String>,
     ) -> Result<usize, MessageStoreError> {
         unimplemented!();
     }
 
-    fn update_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
+    fn update_message(&mut self, _msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!();
     }
     fn get_messages_page(
@@ -67,12 +67,12 @@ impl IMessageStore for MessageStore {
     }
     fn search_by_date(
         &self,
-        start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        _start: DateTime<Utc>,
+        _end: DateTime<Utc>,
     ) -> Result<Vec<Message>, MessageStoreError> {
         unimplemented!();
     }
-    fn delete_message(&mut self, msg: Message) -> Result<(), MessageStoreError> {
+    fn delete_message(&mut self, _msg: Message) -> Result<(), MessageStoreError> {
         unimplemented!();
     }
 }
@@ -110,7 +110,7 @@ impl MessageStore {
     }
 
     fn init_progress(&mut self, num: usize) -> thread::JoinHandle<()> {
-        let mut mb = MultiBar::new();
+        let mb = MultiBar::new();
         mb.println(&format!("Indexing {} emails", num));
         let mut index_bar = mb.create_bar(num as u64);
         if num < 10_000_000 {
@@ -190,7 +190,7 @@ impl MessageStore {
                 self.do_index_mails(maildir, full)?;
                 Ok(1)
             }
-            Err(e) => Err(MessageStoreError::CouldNotOpenMaildir(
+            Err(_) => Err(MessageStoreError::CouldNotOpenMaildir(
                 "Failed to read maildir".to_string(),
             )),
         }

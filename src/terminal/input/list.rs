@@ -59,11 +59,11 @@ impl Runnable for ListRunner {
     }
 }
 
-pub fn handler() -> Box<InputHandler> {
-    Box::new(InputHandler {
+pub fn handler() -> InputHandler {
+    InputHandler {
         name: String::from("List"),
         pre: true,
         f: Box::new(ListRunner {}),
         children: vec![],
-    })
+    }
 }

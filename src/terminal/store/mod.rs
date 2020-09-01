@@ -16,7 +16,7 @@ pub struct Store<'a> {
     pub tags_store: TagsStore<'a>,
 }
 impl<'a> Store<'a> {
-    pub fn new(message_store: &'a IMessageStore) -> Store {
+    pub fn new(message_store: &'a dyn IMessageStore) -> Store {
         Store {
             exit: false,
             search_store: SearchStore::new(message_store),
