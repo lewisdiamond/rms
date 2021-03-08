@@ -1,4 +1,5 @@
 use crate::terminal::store::Store;
+use crate::readmail::display::{OutputType, DisplayAs};
 use tui::backend::Backend;
 use tui::layout::Rect;
 use tui::style::{Color, Modifier, Style};
@@ -17,8 +18,7 @@ pub fn draw<B: Backend>(f: &mut Frame<B>, area: Rect, store: &Store) {
     let items: Vec<ListItem> = display
         .iter()
         .map(|s| {
-            let s = s.to_string();
-            ListItem::new(Span::raw(s))
+            ListItem::new(Span::raw(s.display(&OutputType::Summary)))
         })
         .collect::<Vec<ListItem>>();
     let list = List::new(items)

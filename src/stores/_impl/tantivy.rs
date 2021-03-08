@@ -1,15 +1,15 @@
 use crate::message::{Message, MessageError};
 use crate::stores::{IMessageSearcher, MessageStoreError};
-use log::info;
+use log::{error, info};
 use std::cmp;
 use std::collections::HashSet;
 use std::fs;
 use std::panic;
 use std::path::PathBuf;
 use std::string::ToString;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{TopDocs, Count};
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, TermQuery};
+use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, TermQuery, RegexQuery};
 use tantivy::schema::*;
 const BYTES_IN_MB: usize = 1024 * 1024;
 
@@ -218,6 +218,7 @@ impl TantivyStore {
                     .iter()
                     .for_each(|t| document.add_text(email.tag, t.as_str()));
                 indexer.add_document(document);
+                indexer.commit();
                 Ok(msg.id)
             }
             None => Err(MessageStoreError::CouldNotAddMessage(
@@ -305,17 +306,14 @@ impl TantivyStore {
     ) -> Result<Vec<TantivyMessage>, MessageStoreError> {
         let searcher = self.reader.searcher();
         let skip = _skip.unwrap_or(0);
-        let mut docs = searcher
+        let docs = searcher
             .search(
                 &AllQuery,
-                &TopDocs::with_limit(num + skip).order_by_u64_field(self.email.date),
+                &TopDocs::with_limit(num).and_offset(skip).order_by_u64_field(self.email.date),
             )
             .map_err(|_| MessageStoreError::CouldNotGetMessages(vec![]))?;
         let mut ret = vec![];
-        let page = docs
-            .drain(skip..)
-            .collect::<Vec<(u64, tantivy::DocAddress)>>();
-        for doc in page {
+        for doc in docs {
             let retrieved_doc = searcher.doc(doc.1).unwrap();
             ret.push(
                 TantivyMessage::from_tantivy(retrieved_doc, &self.email).map_err(|_| {
@@ -329,17 +327,17 @@ impl TantivyStore {
     pub fn get_doc(&self, id: &str) -> Result<Document, tantivy::TantivyError> {
         // Is this needed? self.reader.load_searchers()?;
         let searcher = self.reader.searcher();
-        let termq = TermQuery::new(
-            Term::from_field_text(self.email.id, id),
-            IndexRecordOption::Basic,
-        );
-        let addr = searcher.search(&termq, &TopDocs::with_limit(1));
-        match addr {
-            Ok(doc) => match doc.first() {
+        let termq = RegexQuery::from_pattern(format!("{}.*",id).as_str(), self.email.id)?;
+        let res = searcher.search(&termq, &(TopDocs::with_limit(1), Count));
+        match res {
+            Ok((doc, count)) => match doc.first() {
                 Some((_score, doc_address)) => searcher.doc(*doc_address),
-                None => Err(tantivy::TantivyError::InvalidArgument(
+                None => {
+                    error!("Got count {:}", count);
+                    Err(tantivy::TantivyError::InvalidArgument(
                     "Document not found".to_string(),
-                )),
+                ))
+                },
             },
 
             Err(e) => Err(e),

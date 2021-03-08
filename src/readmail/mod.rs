@@ -3,8 +3,10 @@ use crate::message::{Body, Mime};
 use log::debug;
 use mailparse::*;
 use select::document::Document;
-use select::predicate::Text;
+use select::predicate::{Text, Name, Predicate};
 use std::cmp::Ordering;
+
+pub mod display;
 
 fn cmp_body(x: &Body, y: &Body, prefer: &Mime) -> Ordering {
     if x.mime == y.mime {
@@ -66,8 +68,8 @@ pub fn extract_body(msg: &ParsedMail, prefer_html: bool) -> Vec<Body> {
 
 pub fn html2text(text: &str) -> String {
     let document = Document::from(text);
-    let text_nodes = document
-        .find(Text)
+    let body = document.find(Name("body")).nth(0).unwrap();
+    let text_nodes = body.find(Text)
         .map(|x| String::from(x.text().trim()))
         .filter(|x| x.len() > 1)
         .collect::<Vec<String>>();

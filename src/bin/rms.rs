@@ -1,5 +1,6 @@
 use log::{error, info, trace};
-use rms::cmd::{opts, Command, OutputType};
+use rms::cmd::{opts, Command};
+use rms::readmail::display::{OutputType, DisplayAs};
 use rms::message::{Body, Mime};
 use rms::stores::{IMessageStore, MessageStoreBuilder, Searchers, Storages};
 use rms::terminal;
@@ -25,27 +26,27 @@ pub async fn main() {
             }
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path))
+                .searcher(Searchers::Tantivy(index_dir_path.clone()))
                 .debug(debug)
                 .build();
             match message_store {
                 Ok(mut store) => {
-                    maildir_path.into_iter().for_each(|m| {
+                    for m in maildir_path {
                         println!("Adding maildir at {}", m.to_str().unwrap());
-                        match store.add_maildir(m.clone(), full) {
+                        match store.add_maildir(m.clone(), full).await {
                             Err(e) => error!(
                                 "Failed to add mails from {}, detauls: {}",
                                 m.to_str().unwrap(),
                                 e
                             ),
                             Ok(_) => println!("Successfully added {}", m.to_str().unwrap()),
-                        }
-                    });
+                        };
+                    }
                 }
                 Err(e) => {
                     error!("{}", e);
                 }
-            }
+            };
             //maildir_path[0].clone(), index_dir_path);
             //if let Some(threads) = threads {
             //    indexer_builder.threads(threads);
@@ -56,7 +57,7 @@ pub async fn main() {
             //let mut indexer = indexer_builder.build();
             //message_store.index_mails(full);
         }
-        Command::Search { term, output, num } => {
+        Command::Search { term, output, num, advanced } => {
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
                 .searcher(Searchers::Tantivy(index_dir_path))
@@ -66,36 +67,39 @@ pub async fn main() {
             match message_store {
                 Ok(store) => {
                     let results = store.search_fuzzy(term, num).ok().unwrap();
-                    match output {
-                        OutputType::Short => {
-                            for r in results {
-                                println!("{:?} | {}", r.id, r.subject);
-                            }
+                        for r in results {
+                            print!("{}", r.display(&output));
                         }
-                        OutputType::Full => {
-                            println!("{:?}", results);
-                        }
-                        OutputType::Raw => {
-                            let mut out = io::stdout();
-                            for result in results {
-                                out.write_all(result.original.as_ref()).unwrap();
-                            }
-                        }
-                        OutputType::Html => {
-                            for m in results {
-                                println!(
-                                    "{}",
-                                    m.body
-                                        .iter()
-                                        .filter(|x| x.mime == Mime::Html)
-                                        .collect::<Vec<&Body>>()
-                                        .first()
-                                        .map(|b| b.value.clone())
-                                        .unwrap_or_else(|| "No body".to_string())
-                                );
-                            }
-                        }
-                    }
+                    //match output {
+ //                       OutputType::Short => {
+ //                           for r in results {
+ //                               println!("{:?} | {}", r.id, r.subject);
+ //                           }
+ //                       }
+ //                       OutputType::Full => {
+ //                           println!("{:?}", results);
+ //                       }
+ //                       OutputType::Raw => {
+ //                           let mut out = io::stdout();
+ //                           for result in results {
+ //                               out.write_all(result.original.as_ref()).unwrap();
+ //                           }
+ //                       }
+ //                       OutputType::Html => {
+ //                           for m in results {
+ //                               println!(
+ //                                   "{}",
+ //                                   m.body
+ //                                       .iter()
+ //                                       .filter(|x| x.mime == Mime::Html)
+ //                                       .collect::<Vec<&Body>>()
+ //                                       .first()
+ //                                       .map(|b| b.value.clone())
+ //                                       .unwrap_or_else(|| "No body".to_string())
+ //                               );
+ //                           }
+ //                       }
+ //                   }
                 }
                 Err(e) => error!("{}", e),
             }
@@ -124,46 +128,7 @@ pub async fn main() {
                 Ok(store) => {
                     let result = store.get_message(id);
                     match result {
-                        Ok(Some(good_msg)) => match output {
-                            OutputType::Short => {
-                                println!("{} | {}", good_msg.id, good_msg.subject);
-                            }
-                            OutputType::Raw => {
-                                io::stdout().write_all(good_msg.original.as_ref()).unwrap();
-                            }
-                            OutputType::Full => {
-                                println!("From: {}", good_msg.from);
-                                println!(
-                                    "To: {}",
-                                    good_msg
-                                        .recipients
-                                        .get(0)
-                                        .unwrap_or(&String::from("Unknown"))
-                                );
-                                println!("Subject: {}", good_msg.subject);
-                                println!(
-                                    "{}",
-                                    good_msg
-                                        .body
-                                        .first()
-                                        .map(|b| b.value.clone())
-                                        .unwrap_or_else(|| "No body".to_string())
-                                );
-                            }
-                            OutputType::Html => {
-                                println!(
-                                    "{}",
-                                    good_msg
-                                        .body
-                                        .iter()
-                                        .filter(|x| x.mime == Mime::Html)
-                                        .collect::<Vec<&Body>>()
-                                        .first()
-                                        .map(|b| b.value.clone())
-                                        .unwrap_or_else(|| "No body".to_string())
-                                );
-                            }
-                        },
+                        Ok(Some(good_msg)) => println!("{}", good_msg.display(&output)),
                         Ok(None) => error!("Message not found"),
                         Err(e) => error!("ERROR {}", e),
                     }
@@ -174,18 +139,18 @@ pub async fn main() {
         Command::Interactive {} => {
             terminal::start(index_dir_path).unwrap();
         }
-        Command::Latest { num: _num } => {
+        Command::Latest { num: _num, skip, output } => {
             let message_store = MessageStoreBuilder::new()
                 .storage(Storages::Tantivy(index_dir_path.clone()))
                 .searcher(Searchers::Tantivy(index_dir_path))
                 .build();
             match message_store {
                 Ok(store) => {
-                    let page = store.get_messages_page(0, _num);
+                    let page = store.get_messages_page(skip, _num);
                     match page {
                         Ok(msgs) => {
                             for m in msgs {
-                                println!("{}", m.id);
+                                println!("{}", m.display(&output));
                             }
                         }
                         Err(e) => println!("Could not read messages, {}", e),

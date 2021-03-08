@@ -1,22 +1,24 @@
 use crate::message::Message;
 use crate::stores::{IMessageSearcher, IMessageStorage, IMessageStore, MessageStoreError};
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::future::join_all;
 use log::error;
 use maildir::{MailEntry, Maildir};
 use pbr::{MultiBar, ProgressBar};
-use rayon::prelude::*;
-use std::collections::HashSet;
+use std::{collections::HashSet, fmt};
 use std::path::PathBuf;
-use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 pub struct MessageStore {
-    pub searcher: Box<dyn IMessageSearcher>,
-    pub storage: Option<Box<dyn IMessageStorage>>,
+    pub searcher: Box<dyn IMessageSearcher + Send + Sync>,
+    pub storage: Option<Box<dyn IMessageStorage + Send + Sync>>,
     progress: Option<ProgressBar<pbr::Pipe>>,
     display_progress: bool,
 }
+#[async_trait]
 impl IMessageStore for MessageStore {
     fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError> {
         self.searcher.get_message(id)
@@ -32,8 +34,8 @@ impl IMessageStore for MessageStore {
         Ok(id)
     }
 
-    fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError> {
-        self.index_mails(path, all)
+    async fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError> {
+        self.index_mails(path, all).await
     }
     fn tag_message_id(
         &mut self,
@@ -76,10 +78,21 @@ impl IMessageStore for MessageStore {
         unimplemented!();
     }
 }
+
+struct Entry {
+    e: MailEntry,
+}
+
+impl fmt::Debug for Entry {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Entry").field("e", &String::from("ARGH")).finish()
+    }
+}
+
 impl MessageStore {
     pub fn new(
-        searcher: Box<dyn IMessageSearcher>,
-        storage: Option<Box<dyn IMessageStorage>>,
+        searcher: Box<dyn IMessageSearcher + Send + Sync>,
+        storage: Option<Box<dyn IMessageStorage + Send + Sync>>,
         display_progress: bool,
     ) -> Self {
         MessageStore {
@@ -135,7 +148,26 @@ impl MessageStore {
         }
     }
 
-    fn do_index_mails(&mut self, maildir: Maildir, full: bool) -> Result<usize, MessageStoreError> {
+    fn parse_message(mail: MailEntry) -> Result<(Message, String), MessageStoreError> {
+        let message = Message::from_mailentry(mail);
+        match message {
+            Ok(msg) => {
+                let parsed_body = msg.get_body(None).as_text();
+                Ok((msg, parsed_body))
+            }
+            Err(err) => {
+                error!("A message could not be parsed: {}", err.message);
+                Err(MessageStoreError::CouldNotAddMessage(
+                    "Failed to parse email".to_string(),
+                ))
+            }
+        }
+    }
+    async fn do_index_mails(
+        &mut self,
+        maildir: Maildir,
+        full: bool,
+    ) -> Result<usize, MessageStoreError> {
         let mails: Vec<Result<MailEntry, _>> = Self::mail_iterator(&maildir, full).collect();
         let count = mails.len();
         self.start_indexing_process(count)?;
@@ -143,37 +175,32 @@ impl MessageStore {
         if self.display_progress {
             progress_handle = Some(self.init_progress(count));
         }
-        let (tx, rx) = mpsc::channel();
-
-        let t = thread::spawn(move || {
-            mails
-                .into_par_iter()
-                .for_each_with(tx, |tx, msg| match msg {
-                    Ok(unparsed_msg) => {
-                        let message = Message::from_mailentry(unparsed_msg);
-                        match message {
-                            Ok(msg) => {
-                                let parsed_body = msg.get_body().as_text();
-                                tx.send((msg, parsed_body))
-                                    .expect("Could not send to channel?")
-                            }
-                            Err(err) => {
-                                error!("A message could not be parsed: {}", err.message);
-                            }
-                        }
+        let (tx, mut rx) = mpsc::channel(100);
+        let handles = mails
+            .into_iter()
+            .map(|m| {
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(entry) = m {
+                        let id = match entry.is_seen() {
+                            true => None,
+                            false => Some(String::from(entry.id()))
+                        };
+                        if let Ok((msg, body)) = MessageStore::parse_message(entry) {
+                            tx.send((msg, body, id)).await.unwrap();
+                        };
                     }
-                    Err(e) => {
-                        error!("Failed to get message {}", e);
-                    }
-                });
-        });
-
-        while let Ok((msg, parsed_body)) = rx.recv() {
+                })
+            })
+            .collect::<Vec<tokio::task::JoinHandle<_>>>();
+        drop(tx);
+        while let Some((msg, parsed_body, id)) = rx.recv().await {
             self.add_message(msg, parsed_body)?;
             self.inc_progress();
+            id.map( |id| maildir.move_new_to_cur(&id).map_err(|_| MessageStoreError::CouldNotModifyMessage(format!("Message couldn't be moved {}", id))));
         }
+        join_all(handles).await;
         self.finish_indexing_process()?;
-        t.join().expect("Unable to join threads for some reason");
         self.finish_progress();
         if let Some(handle) = progress_handle {
             handle
@@ -183,11 +210,15 @@ impl MessageStore {
         Ok(count)
     }
 
-    pub fn index_mails(&mut self, path: PathBuf, full: bool) -> Result<usize, MessageStoreError> {
+    pub async fn index_mails(
+        &mut self,
+        path: PathBuf,
+        full: bool,
+    ) -> Result<usize, MessageStoreError> {
         let maildir = self.maildir(path);
         match maildir {
             Ok(maildir) => {
-                self.do_index_mails(maildir, full)?;
+                self.do_index_mails(maildir, full).await?;
                 Ok(1)
             }
             Err(_) => Err(MessageStoreError::CouldNotOpenMaildir(

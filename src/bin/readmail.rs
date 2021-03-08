@@ -18,13 +18,11 @@ fn main() {
                         println!("From: {}", message.from);
                         println!("To: {}", message.recipients.join(", "));
                         println!("Subject: {}", message.subject);
-                        for b in message.body {
-                            println!("Body Mime: {}", b.mime.as_str());
-                            match b.mime {
-                                Mime::PlainText => println!("\n\n{}", b.value),
-                                Mime::Html => println!("\n\n{}", html2text(&b.value)),
-                                _ => println!("Unknown mime type"),
-                            }
+                        let body = message.get_body(None);
+                        match body.mime {
+                            Mime::PlainText => println!("\n\n{}", body.value),
+                            Mime::Html => println!("\n\n{}", html2text(&body.value)),
+                            _ => println!("Unknown mime type"),
                         }
                     }
                     Err(_e) => error!("Failed to make sense of the message"),

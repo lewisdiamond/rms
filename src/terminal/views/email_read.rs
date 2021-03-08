@@ -1,4 +1,5 @@
 use crate::message::Message;
+use crate::readmail::display::{OutputType, DisplayAs};
 use tui::backend::Backend;
 use tui::layout::Rect;
 use tui::text::Text;
@@ -6,7 +7,7 @@ use tui::widgets::{Block, Borders, Paragraph, Wrap};
 use tui::Frame;
 
 pub fn draw<B: Backend>(f: &mut Frame<B>, message: &Message, scroll: u16) {
-    let text = message.to_long_string();
+    let text = message.display(&OutputType::Full);
     let f_r = f.size();
     let rect = Rect {
         x: f_r.x + f_r.width / 2 - 40,

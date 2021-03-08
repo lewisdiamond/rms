@@ -6,7 +6,6 @@ pub struct ListStore<'a> {
     pub selected: usize,
     pub page_size: usize,
     pub curr_idx: usize,
-    pub fetched_first: bool,
     pub message_store: &'a dyn IMessageStore,
 }
 
@@ -15,7 +14,6 @@ impl<'a> ListStore<'a> {
         ListStore {
             messages: vec![],
             selected: 0,
-            fetched_first: false,
             page_size: 10,
             curr_idx: 0,
             message_store: msg_store,
@@ -49,6 +47,8 @@ impl<'a> ListStore<'a> {
         if r < 0 {
             r = 0
         } else if r > l - 1 {
+            let mut messages = self.message_store.get_messages_page(r as usize, self.page_size);
+            self.messages.append(messages.as_mut().ok().unwrap());
             r = l
         };
         self.selected = r as usize;
@@ -56,14 +56,9 @@ impl<'a> ListStore<'a> {
     }
 
     pub fn latest(&mut self) {
-        let mut page_size = self.page_size;
-        if !self.fetched_first {
-            page_size = 1000;
-            self.fetched_first = true;
-        }
         let messages = self
             .message_store
-            .get_messages_page(self.curr_idx, page_size);
+            .get_messages_page(self.curr_idx, self.page_size);
         match messages {
             Ok(messages) => self.messages = messages,
             Err(_) => self.messages = vec![], // TODO Handle error

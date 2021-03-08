@@ -1,4 +1,5 @@
 use crate::message::Message;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -192,6 +193,7 @@ pub trait IMessageStorage {
     ) -> Result<Vec<Message>, MessageStoreError>;
 }
 
+#[async_trait]
 pub trait IMessageStore {
     fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError>;
     fn add_message(
@@ -199,7 +201,9 @@ pub trait IMessageStore {
         msg: Message,
         parsed_body: String,
     ) -> Result<String, MessageStoreError>;
-    fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError>;
+    
+    async fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError>;
+
     fn tag_message_id(
         &mut self,
         id: String,

@@ -1,8 +1,7 @@
 use std::ffi::OsStr;
 use std::path::PathBuf;
-use std::str::FromStr;
-use std::{error, fmt};
 use structopt::StructOpt;
+use crate::readmail::display::OutputType;
 
 pub fn expand_path(input: &OsStr) -> PathBuf {
     let input_str = input
@@ -14,49 +13,8 @@ pub fn expand_path(input: &OsStr) -> PathBuf {
     PathBuf::from(expanded)
 }
 
-#[derive(Debug)]
-pub enum OutputType {
-    Short,
-    Full,
-    Raw,
-    Html,
-}
 
-#[derive(Debug)]
-pub enum OutputTypeError {
-    UnknownTypeError,
-}
 
-impl fmt::Display for OutputTypeError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Could not figure out output format")
-    }
-}
-
-// This is important for other errors to wrap this one.
-impl std::error::Error for OutputTypeError {
-    fn description(&self) -> &str {
-        "invalid first item to double"
-    }
-
-    fn cause(&self) -> Option<&dyn error::Error> {
-        // Generic error, underlying cause isn't tracked.
-        None
-    }
-}
-
-impl FromStr for OutputType {
-    type Err = OutputTypeError;
-    fn from_str(input: &str) -> Result<OutputType, Self::Err> {
-        match input.to_lowercase().as_str() {
-            "short" => Ok(OutputType::Short),
-            "full" => Ok(OutputType::Full),
-            "raw" => Ok(OutputType::Raw),
-            "html" => Ok(OutputType::Html),
-            _ => Err(OutputTypeError::UnknownTypeError),
-        }
-    }
-}
 
 #[derive(Debug, StructOpt)]
 #[structopt(
@@ -115,6 +73,9 @@ pub enum Command {
 
         #[structopt(short, long, default_value = "100")]
         num: usize,
+
+        #[structopt(short, long)]
+        advanced: bool,
     },
     #[structopt(name = "date", rename_all = "kebab-case")]
     Date { term: i64 },
@@ -131,6 +92,10 @@ pub enum Command {
     Latest {
         #[structopt(short, long)]
         num: usize,
+        #[structopt(short, long, default_value = "0")]
+        skip: usize,
+        #[structopt(short, long, default_value = "short")]
+        output: OutputType,
     },
 
     #[structopt(name = "tag")]

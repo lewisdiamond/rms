@@ -8,7 +8,8 @@ use sha2::{Digest, Sha512};
 use std::collections::HashSet;
 use std::convert::AsRef;
 use std::fmt;
-use std::string::ToString;
+use crate::readmail::display::{DisplayAs, OutputType};
+
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Mime {
@@ -106,16 +107,21 @@ pub fn get_id(data: &[u8]) -> String {
     format!("{:x}", Sha512::digest(data))
 }
 
-impl ToString for ShortMessage {
-    fn to_string(&self) -> String {
+impl fmt::Display for ShortMessage {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let dt = Local.timestamp(self.date as i64, 0);
         let dstr = dt.format("%a %b %e %T %Y").to_string();
-        format!("{}: [{}] {}", dstr, self.from, self.subject.as_str())
+        write!(f, "{}: [{}] {}", dstr, self.from, self.subject.as_str())
     }
 }
 
-impl ToString for Message {
-    fn to_string(&self) -> String {
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.display(&OutputType::Short))
+    }
+}
+impl DisplayAs for Message {
+    fn display(&self, t: &OutputType) -> String {
         let dt = Local.timestamp(self.date as i64, 0);
         let dstr = dt.format("%a %b %e %T %Y").to_string();
         let tags = if self.tags.is_empty() {
@@ -123,13 +129,28 @@ impl ToString for Message {
         } else {
             String::from("")
         };
-        format!(
-            "{} {}: [{}] {}",
-            tags,
-            dstr,
+        match t {
+            OutputType::Short => format!("{} | {} | {}", self.short_id(), dstr, self.subject.as_str()),
+            OutputType::Full => format!(
+            r#"
+        From: {}
+        to/cc/bcc: {}
+        Date: {}
+        Subject: {}
+
+        {} 
+        # {} 
+        "#,
             self.from,
-            self.subject.as_str()
-        )
+            self.recipients.join(","),
+            dstr,
+            self.subject,
+self.get_body(None).as_text(), self.id
+        ),
+            OutputType::Html => format!("{}", self.get_body(Some(Mime::Html)).as_text()),
+            OutputType::Summary => format!("{} | {} [{}]", dstr, self.subject.as_str(), self.from),
+            OutputType::Raw => String::from_utf8(self.original.clone()).unwrap_or(String::from("BAD FILE, please open an issue")),
+        }
     }
 }
 
@@ -146,7 +167,8 @@ impl MessageError {
 }
 
 impl Message {
-    pub fn from_parsedmail(msg: &ParsedMail, id: String) -> Result<Self, MessageError> {
+    pub fn from_parsedmail(msg: &ParsedMail) -> Result<Self, MessageError> {
+        let id = get_id(msg.data);
         let original = Vec::from(msg.data);
         let headers = &msg.headers;
         let mut subject: String = "".to_string();
@@ -193,42 +215,26 @@ impl Message {
         })
     }
     pub fn from_data(data: Vec<u8>) -> Result<Self, MessageError> {
-        let id = get_id(data.as_ref());
         let parsed_mail = parse_mail(data.as_slice()).map_err(|_| MessageError {
             message: String::from("Unable to parse email data"),
         })?;
-        Self::from_parsedmail(&parsed_mail, id)
+        Self::from_parsedmail(&parsed_mail)
     }
     pub fn from_mailentry(mut mailentry: MailEntry) -> Result<Self, MessageError> {
-        let id = mailentry.id().to_owned();
         match mailentry.parsed() {
-            Ok(parsed) => Self::from_parsedmail(&parsed, id),
+            Ok(parsed) => Self::from_parsedmail(&parsed),
             Err(_) => Err(MessageError {
-                message: format!("Failed to parse email id {}", id),
+                message: format!("Failed to parse email id {}", mailentry.id()),
             }),
         }
     }
-    pub fn get_body(&self) -> &Body {
-        self.body.get(0).unwrap()
+    pub fn get_body(&self, mime: Option<Mime>) -> &Body {
+        let m = mime.unwrap_or(Mime::PlainText);
+        self.body.iter().find(|b| b.mime == m ).unwrap_or(self.body.get(0).unwrap())
     }
-    pub fn to_long_string(&self) -> String {
-        format!(
-            r#"
-        From: {}
-        to/cc/bcc: {}
-        Subject: {}
 
-        {} 
-        "#,
-            self.from,
-            self.recipients.join(","),
-            self.subject,
-            self.body
-                .iter()
-                .map(|b| b.value.replace('\r', ""))
-                .collect::<Vec<String>>()
-                .join("-----")
-        )
+    pub fn short_id(&self) -> &str{
+        &self.id[..24]
     }
 }
 #[allow(dead_code)]
