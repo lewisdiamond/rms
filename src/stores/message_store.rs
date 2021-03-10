@@ -79,15 +79,6 @@ impl IMessageStore for MessageStore {
     }
 }
 
-struct Entry {
-    e: MailEntry,
-}
-
-impl fmt::Debug for Entry {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Entry").field("e", &String::from("ARGH")).finish()
-    }
-}
 
 impl MessageStore {
     pub fn new(

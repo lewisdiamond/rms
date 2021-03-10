@@ -218,7 +218,7 @@ impl TantivyStore {
                     .iter()
                     .for_each(|t| document.add_text(email.tag, t.as_str()));
                 indexer.add_document(document);
-                indexer.commit();
+                indexer.commit().map_err(|e| MessageStoreError::CouldNotAddMessage(format!("Failed to commit, {}", e)))?;
                 Ok(msg.id)
             }
             None => Err(MessageStoreError::CouldNotAddMessage(
