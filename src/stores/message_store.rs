@@ -2,11 +2,10 @@ use crate::message::Message;
 use crate::stores::{IMessageSearcher, IMessageStorage, IMessageStore, MessageStoreError};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use futures::future::join_all;
 use log::error;
 use maildir::{MailEntry, Maildir};
+use std::collections::HashSet;
 use pbr::{MultiBar, ProgressBar};
-use std::{collections::HashSet, fmt};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
@@ -29,9 +28,7 @@ impl IMessageStore for MessageStore {
         msg: Message,
         parsed_body: String,
     ) -> Result<String, MessageStoreError> {
-        let id = msg.id.clone();
-        self.searcher.add_message(msg, parsed_body)?;
-        Ok(id)
+        self.searcher.add_message(msg, parsed_body)
     }
 
     async fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError> {
@@ -190,7 +187,9 @@ impl MessageStore {
             self.inc_progress();
             id.map( |id| maildir.move_new_to_cur(&id).map_err(|_| MessageStoreError::CouldNotModifyMessage(format!("Message couldn't be moved {}", id))));
         }
-        join_all(handles).await;
+        for handle in handles {
+            handle.await.unwrap();
+        }
         self.finish_indexing_process()?;
         self.finish_progress();
         if let Some(handle) = progress_handle {

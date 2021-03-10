@@ -68,7 +68,7 @@ pub async fn main() {
                 Ok(store) => {
                     let results = store.search_fuzzy(term, num).ok().unwrap();
                         for r in results {
-                            print!("{}", r.display(&output));
+                            println!("{}", r.display(&output));
                         }
                     //match output {
  //                       OutputType::Short => {

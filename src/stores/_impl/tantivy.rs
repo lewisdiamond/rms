@@ -7,9 +7,9 @@ use std::fs;
 use std::panic;
 use std::path::PathBuf;
 use std::string::ToString;
-use tantivy::collector::{TopDocs, Count};
+use tantivy::collector::{Count, TopDocs};
 use tantivy::directory::MmapDirectory;
-use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, TermQuery, RegexQuery};
+use tantivy::query::{AllQuery, BooleanQuery, FuzzyTermQuery, Occur, Query, RegexQuery};
 use tantivy::schema::*;
 const BYTES_IN_MB: usize = 1024 * 1024;
 
@@ -218,7 +218,6 @@ impl TantivyStore {
                     .iter()
                     .for_each(|t| document.add_text(email.tag, t.as_str()));
                 indexer.add_document(document);
-                indexer.commit().map_err(|e| MessageStoreError::CouldNotAddMessage(format!("Failed to commit, {}", e)))?;
                 Ok(msg.id)
             }
             None => Err(MessageStoreError::CouldNotAddMessage(
@@ -239,7 +238,11 @@ impl TantivyStore {
             )),
         }
     }
-    pub fn _tag_doc(&self, doc: Document, _tags: Vec<String>) -> Result<(), tantivy::TantivyError> {
+    pub fn _tag_doc(
+        &self,
+        doc: Document,
+        _tags: Vec<String>,
+    ) -> Result<(), tantivy::TantivyError> {
         let mut writer = self.get_index_writer(1).ok().unwrap();
         let id = TantivyMessage::from_tantivy(doc, &self.email)
             .map_err(|_| {
@@ -309,7 +312,9 @@ impl TantivyStore {
         let docs = searcher
             .search(
                 &AllQuery,
-                &TopDocs::with_limit(num).and_offset(skip).order_by_u64_field(self.email.date),
+                &TopDocs::with_limit(num)
+                    .and_offset(skip)
+                    .order_by_u64_field(self.email.date),
             )
             .map_err(|_| MessageStoreError::CouldNotGetMessages(vec![]))?;
         let mut ret = vec![];
@@ -327,7 +332,7 @@ impl TantivyStore {
     pub fn get_doc(&self, id: &str) -> Result<Document, tantivy::TantivyError> {
         // Is this needed? self.reader.load_searchers()?;
         let searcher = self.reader.searcher();
-        let termq = RegexQuery::from_pattern(format!("{}.*",id).as_str(), self.email.id)?;
+        let termq = RegexQuery::from_pattern(format!("{}.*", id).as_str(), self.email.id)?;
         let res = searcher.search(&termq, &(TopDocs::with_limit(1), Count));
         match res {
             Ok((doc, count)) => match doc.first() {
@@ -335,9 +340,9 @@ impl TantivyStore {
                 None => {
                     error!("Got count {:}", count);
                     Err(tantivy::TantivyError::InvalidArgument(
-                    "Document not found".to_string(),
-                ))
-                },
+                        "Document not found".to_string(),
+                    ))
+                }
             },
 
             Err(e) => Err(e),
@@ -384,7 +389,8 @@ impl TantivyStore {
                     queries.push((Occur::Should, Box::new(query)));
                     queries.push((Occur::Should, Box::new(query_body)));
                 }
-                let top_docs_by_date = TopDocs::with_limit(num).order_by_u64_field(self.email.date);
+                let top_docs_by_date =
+                    TopDocs::with_limit(num).order_by_u64_field(self.email.date);
                 let bquery = BooleanQuery::from(queries);
                 let top_docs = searcher.search(&bquery, &top_docs_by_date).unwrap();
                 for doc in top_docs {
