@@ -2,7 +2,7 @@ mod list;
 mod reader;
 mod search;
 mod tags;
-use crate::stores::IMessageStore;
+use crate::stores::MessageStore;
 use list::ListStore;
 use reader::ReaderStore;
 use search::SearchStore;
@@ -16,7 +16,7 @@ pub struct Store<'a> {
     pub tags_store: TagsStore<'a>,
 }
 impl<'a> Store<'a> {
-    pub fn new(message_store: &'a dyn IMessageStore) -> Store {
+    pub fn new(message_store: &'a dyn MessageStore) -> Store {
         Store {
             exit: false,
             search_store: SearchStore::new(message_store),

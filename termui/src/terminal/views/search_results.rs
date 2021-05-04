@@ -7,7 +7,10 @@ use tui::text::Span;
 use tui::widgets::{Block, Borders, List, ListItem, ListState};
 use tui::Frame;
 
-pub fn draw<B: Backend>(f: &mut Frame<B>, area: Rect, store: &Store) {
+pub fn draw<B: Backend>(f: &mut Frame<B>, area: Rect, store: &mut Store) {
+    let num_fetch = area.height;
+    store.search_store.set_page_size(num_fetch as usize);
+    store.list_store.set_page_size(num_fetch as usize);
     let style = Style::default().fg(Color::White).bg(Color::Black);
     let display = if store.search_store.results.len() == 0 {
         &store.list_store.messages

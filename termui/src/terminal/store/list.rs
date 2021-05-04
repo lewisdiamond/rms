@@ -1,23 +1,27 @@
 use crate::message::Message;
-use crate::stores::IMessageStore;
+use crate::stores::MessageStore;
 
 pub struct ListStore<'a> {
     pub messages: Vec<Message>,
     pub selected: usize,
     pub page_size: usize,
     pub curr_idx: usize,
-    pub message_store: &'a dyn IMessageStore,
+    pub message_store: &'a dyn MessageStore,
 }
 
 impl<'a> ListStore<'a> {
-    pub fn new(msg_store: &'a dyn IMessageStore) -> ListStore<'a> {
+    pub fn new(msg_store: &'a dyn MessageStore) -> ListStore<'a> {
         ListStore {
             messages: vec![],
             selected: 0,
-            page_size: 10,
+            page_size: 100,
             curr_idx: 0,
             message_store: msg_store,
         }
+    }
+
+    pub fn set_page_size(&mut self, size: usize) {
+        self.page_size = size;
     }
 
     pub fn get_selected(&mut self) -> Option<&Message> {

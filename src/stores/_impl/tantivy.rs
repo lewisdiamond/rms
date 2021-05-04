@@ -1,5 +1,7 @@
 use crate::message::{Message, MessageError};
-use crate::stores::{IMessageSearcher, MessageStoreError};
+use crate::stores::kv::Kv;
+use crate::stores::{MessageStoreError, Store};
+use crate::stores::search::Searcher;
 use log::{error, info};
 use std::cmp;
 use std::collections::HashSet;
@@ -100,43 +102,12 @@ pub struct TantivyStore {
     threads: Option<usize>,
     mem_per_thread: Option<usize>,
 }
-impl IMessageSearcher for TantivyStore {
-    fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError> {
-        if self.writer.is_none() {
-            let writer = self.get_index_writer(num)?;
-            self.writer = Some(writer);
-        }
-        Ok(())
-    }
-
-    fn finish_indexing_process(&mut self) -> Result<(), MessageStoreError> {
-        let writer = &mut self.writer;
-        match writer {
-            Some(writer) => match writer.commit() {
-                Ok(_) => Ok(()),
-                Err(_) => Err(MessageStoreError::CouldNotAddMessage(
-                    "Failed to commit to index".to_string(),
-                )),
-            },
-            None => Err(MessageStoreError::CouldNotAddMessage(
-                "Trying to commit index without an actual index".to_string(),
-            )),
-        }
-    }
-
+impl Store for TantivyStore {
     fn add_message(
         &mut self,
         msg: Message,
-        parsed_body: String,
-    ) -> Result<String, MessageStoreError> {
-        self._add_message(msg, parsed_body)
-    }
-    fn search_fuzzy(
-        &self,
-        query: String,
-        num: usize,
-    ) -> Result<Vec<TantivyMessage>, MessageStoreError> {
-        Ok(self.search(query.as_str(), num))
+    ) -> Result<Message, MessageStoreError> {
+        self._add_message(msg)
     }
     fn delete_message(&mut self, _msg: &Message) -> Result<(), MessageStoreError> {
         Ok(())
@@ -144,14 +115,41 @@ impl IMessageSearcher for TantivyStore {
     fn update_message(&mut self, _msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!();
     }
+}
+impl Searcher for TantivyStore {
+    fn search_fuzzy(
+        &self,
+        query: String,
+        num: usize,
+    ) -> Result<Vec<TantivyMessage>, MessageStoreError> {
+        Ok(self.search(query.as_str(), num))
+    }
 
     fn latest(&mut self, num: usize) -> Result<Vec<Message>, MessageStoreError> {
         self._latest(num, None)
     }
-    fn get_message(&self, id: String) -> Result<Option<Message>, MessageStoreError> {
-        Ok(self._get_message(id.as_ref()))
+
+    fn search_by_date(
+        &self,
+        start: chrono::DateTime<chrono::Utc>,
+        end: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Vec<Message>, MessageStoreError> {
+        todo!()
     }
-    fn get_messages_page(
+
+    fn index(
+        &mut self,
+        size_hint: usize,
+    ) -> Result<(), MessageStoreError> {
+        todo!()
+    }
+}
+
+impl Kv for TantivyStore {
+    fn get_message(&self, id: &str) -> Result<Message, MessageStoreError> {
+        self._get_message(id.as_ref()).ok_or_else(|| MessageStoreError::CouldNotGetMessage(format!("Message not found: {}", id)))
+    }
+    fn get_messages(
         &self,
         start: usize,
         num: usize,
@@ -159,7 +157,6 @@ impl IMessageSearcher for TantivyStore {
         self._latest(num, Some(start))
     }
 }
-
 impl TantivyStore {
     pub fn new(path: PathBuf) -> Self {
         Self::_new(path, false)
@@ -183,6 +180,29 @@ impl TantivyStore {
         Self::_new(path, true)
     }
 
+    fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError> {
+        if self.writer.is_none() {
+            let writer = self.get_index_writer(num)?;
+            self.writer = Some(writer);
+        }
+        Ok(())
+    }
+
+    fn finish_indexing_process(&mut self) -> Result<(), MessageStoreError> {
+        let writer = &mut self.writer;
+        match writer {
+            Some(writer) => match writer.commit() {
+                Ok(_) => Ok(()),
+                Err(_) => Err(MessageStoreError::CouldNotAddMessage(
+                    "Failed to commit to index".to_string(),
+                )),
+            },
+            None => Err(MessageStoreError::CouldNotAddMessage(
+                "Trying to commit index without an actual index".to_string(),
+            )),
+        }
+    }
+
     fn open_or_create(path: PathBuf, schema: Schema) -> tantivy::Index {
         tantivy::Index::open_or_create(MmapDirectory::open(path).unwrap(), schema).unwrap()
     }
@@ -200,8 +220,7 @@ impl TantivyStore {
     fn _add_message(
         &mut self,
         msg: Message,
-        parsed_body: String,
-    ) -> Result<String, MessageStoreError> {
+    ) -> Result<Message, MessageStoreError> {
         let writer = &mut self.writer;
         match writer {
             Some(indexer) => {
@@ -209,16 +228,16 @@ impl TantivyStore {
                 let email = &self.email;
                 document.add_text(email.subject, msg.subject.as_str());
                 document.add_text(email.id, msg.id.as_str());
-                document.add_text(email.body, parsed_body.as_str());
+                document.add_text(email.body, msg.get_body(None).as_text().as_str());
                 document.add_text(email.from, msg.from.as_str());
                 document.add_text(email.recipients, msg.recipients.join(", ").as_str());
-                document.add_bytes(email.original, msg.original);
+                document.add_bytes(email.original, msg.original.clone());
                 document.add_u64(email.date, msg.date);
                 msg.tags
                     .iter()
                     .for_each(|t| document.add_text(email.tag, t.as_str()));
                 indexer.add_document(document);
-                Ok(msg.id)
+                Ok(msg)
             }
             None => Err(MessageStoreError::CouldNotAddMessage(
                 "No indexer was allocated".to_string(),
@@ -357,8 +376,9 @@ impl TantivyStore {
     }
     pub fn search(&self, text: &str, num: usize) -> Vec<TantivyMessage> {
         let searcher = self.reader.searcher();
-        let term = Term::from_field_text(self.email.subject, text);
-        let term_body = Term::from_field_text(self.email.body, text);
+        let lowercased = text.to_lowercase();
+        let term = Term::from_field_text(self.email.subject, &lowercased);
+        let term_body = Term::from_field_text(self.email.body, &lowercased);
         let top_docs_by_date = TopDocs::with_limit(num).order_by_u64_field(self.email.date);
         let bquery = BooleanQuery::new_multiterms_query(vec![term, term_body]);
         let top_docs = searcher.search(&bquery, &top_docs_by_date).unwrap();

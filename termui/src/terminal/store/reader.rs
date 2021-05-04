@@ -1,15 +1,15 @@
 use crate::message::Message;
-use crate::stores::IMessageStore;
+use crate::stores::MessageStore;
 use std::cmp::max;
 
 pub struct ReaderStore<'a> {
     pub message: Option<Message>,
     pub scroll: u16,
-    pub storage: &'a dyn IMessageStore,
+    pub storage: &'a dyn MessageStore,
 }
 
 impl<'a> ReaderStore<'a> {
-    pub fn new(storage: &'a dyn IMessageStore) -> ReaderStore<'a> {
+    pub fn new(storage: &'a dyn MessageStore) -> ReaderStore<'a> {
         ReaderStore {
             message: None,
             scroll: 0,
@@ -27,7 +27,7 @@ impl<'a> ReaderStore<'a> {
         let msg = msg.cloned();
         match msg {
             Some(msg) => {
-                self.message = self.storage.get_message(msg.id).ok().unwrap();
+                self.message = self.storage.get_message(msg.id).ok();
                 self.scroll = 0;
             }
             None => self.message = None,

@@ -2,7 +2,7 @@ mod events;
 mod input;
 mod store;
 mod views;
-use crate::stores::{MessageStoreBuilder, Searchers, Storages};
+use crate::stores::MessageStore;
 use events::Events;
 use input::{handlers, run};
 use std::io;
@@ -18,10 +18,7 @@ pub fn start(index: PathBuf) -> Result<(), io::Error> {
     let backend = TermionBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
-    let message_store = MessageStoreBuilder::new()
-        .storage(Storages::Tantivy(index.clone()))
-        .searcher(Searchers::Tantivy(index.clone()))
-        .build();
+    let message_store = MessageStore::new();
     match message_store {
         Ok(message_store) => {
             let events = Events::new();
@@ -29,7 +26,7 @@ pub fn start(index: PathBuf) -> Result<(), io::Error> {
             store.list_store.latest();
             let handlers = handlers();
             loop {
-                draw(&mut terminal, &store)?;
+                draw(&mut terminal, &mut store)?;
                 let e = events.next().unwrap();
                 run(e, &handlers, &mut store);
                 if store.exit {

@@ -1,20 +1,26 @@
 use crate::message::Message;
-use crate::stores::IMessageStore;
+use crate::stores::MessageStore;
 
 pub struct SearchStore<'a> {
     pub search_term: String,
     pub searching: bool,
-    pub searcher: &'a dyn IMessageStore,
+    pub searcher: &'a dyn MessageStore,
     pub results: Vec<Message>,
+    pub page_size: usize,
 }
 impl<'a> SearchStore<'a> {
-    pub fn new(msg_store: &'a dyn IMessageStore) -> SearchStore {
+    pub fn new(msg_store: &'a dyn MessageStore) -> SearchStore {
         SearchStore {
             search_term: String::from(""),
             searching: false,
             searcher: msg_store,
             results: vec![],
+            page_size: 100,
         }
+    }
+
+    pub fn set_page_size(&mut self, size: usize) {
+        self.page_size = size;
     }
 
     pub fn enable_search(&mut self) {
@@ -26,7 +32,7 @@ impl<'a> SearchStore<'a> {
     }
 
     fn _search(&mut self) {
-        self.results = match self.searcher.search_fuzzy(self.search_term.clone(), 100) {
+        self.results = match self.searcher.search_fuzzy(self.search_term.clone(), self.page_size) {
             Ok(r) => r,
             Err(_e) => vec![],
         };

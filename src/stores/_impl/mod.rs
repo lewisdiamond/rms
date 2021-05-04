@@ -1,2 +1,2 @@
-pub mod rocksdb;
+pub mod kv;
 pub mod tantivy;

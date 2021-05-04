@@ -2,13 +2,14 @@ use log::{error, info, trace};
 use rms::cmd::{opts, Command};
 use rms::readmail::display::{OutputType, DisplayAs};
 use rms::message::{Body, Mime};
-use rms::stores::{IMessageStore, MessageStoreBuilder, Searchers, Storages};
-use rms::terminal;
+use rms::stores::message_store::MessageStore;
+use rms::stores::_impl::tantivy::TantivyStore;
 use std::collections::HashSet;
 use std::io::{self, Write};
+use tokio;
 
 #[tokio::main]
-pub async fn main() {
+async fn main() {
     pretty_env_logger::init();
     let opt = opts();
     trace!("Using config file at {:?}", opt.config); //, index.maildir_path);
@@ -24,11 +25,11 @@ pub async fn main() {
             if full {
                 info!("Full indexing selected.");
             }
-            let message_store = MessageStoreBuilder::new()
+            let message_store = MessageStore {
+                searcher: Tanti
+                }
                 .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()))
-                .debug(debug)
-                .build();
+                .searcher(Searchers::Tantivy(index_dir_path.clone()));
             match message_store {
                 Ok(mut store) => {
                     for m in maildir_path {
@@ -137,7 +138,7 @@ pub async fn main() {
             }
         }
         Command::Interactive {} => {
-            terminal::start(index_dir_path).unwrap();
+            //terminal::start(index_dir_path).unwrap();
         }
         Command::Latest { num: _num, skip, output } => {
             let message_store = MessageStoreBuilder::new()

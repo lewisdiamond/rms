@@ -8,7 +8,7 @@ use tui::Terminal;
 pub mod email_read;
 pub mod search_results;
 
-pub fn draw<B: Backend>(terminal: &mut Terminal<B>, store: &Store) -> Result<(), io::Error> {
+pub fn draw<B: Backend>(terminal: &mut Terminal<B>, store: &mut Store) -> Result<(), io::Error> {
     terminal.draw(|mut f| match &store.reader_store.message {
         Some(msg) => {
             email_read::draw(&mut f, msg, store.reader_store.scroll);
@@ -34,7 +34,7 @@ pub fn draw<B: Backend>(terminal: &mut Terminal<B>, store: &Store) -> Result<(),
 
             let t = Block::default().title("Tags").borders(Borders::ALL);
             f.render_widget(t, chunks[0]);
-            search_results::draw(&mut f, chunks[1], &store);
+            search_results::draw(&mut f, chunks[1], store);
         }
     })
 }
