@@ -1,11 +1,9 @@
 use log::{error, info, trace};
 use rms::cmd::{opts, Command};
-use rms::readmail::display::{OutputType, DisplayAs};
-use rms::message::{Body, Mime};
+use rms::readmail::display::DisplayAs;
+use rms::stores::kv::Kv;
 use rms::stores::message_store::MessageStore;
-use rms::stores::_impl::tantivy::TantivyStore;
 use std::collections::HashSet;
-use std::io::{self, Write};
 use tokio;
 
 #[tokio::main]
@@ -14,6 +12,7 @@ async fn main() {
     let opt = opts();
     trace!("Using config file at {:?}", opt.config); //, index.maildir_path);
     let index_dir_path = opt.index_dir_path;
+    let message_store = MessageStore::new(index_dir_path);           
 
     match opt.cmd {
         Command::Index {
@@ -25,18 +24,13 @@ async fn main() {
             if full {
                 info!("Full indexing selected.");
             }
-            let message_store = MessageStore {
-                searcher: Tanti
-                }
-                .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path.clone()));
             match message_store {
                 Ok(mut store) => {
                     for m in maildir_path {
                         println!("Adding maildir at {}", m.to_str().unwrap());
                         match store.add_maildir(m.clone(), full).await {
                             Err(e) => error!(
-                                "Failed to add mails from {}, detauls: {}",
+                                "Failed to add mails from {}, details: {}",
                                 m.to_str().unwrap(),
                                 e
                             ),
@@ -58,49 +52,48 @@ async fn main() {
             //let mut indexer = indexer_builder.build();
             //message_store.index_mails(full);
         }
-        Command::Search { term, output, num, advanced } => {
-            let message_store = MessageStoreBuilder::new()
-                .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path))
-                .read_only()
-                .build();
-
+        Command::Search {
+            term,
+            output,
+            num,
+            advanced,
+        } => {
             match message_store {
                 Ok(store) => {
-                    let results = store.search_fuzzy(term, num).ok().unwrap();
-                        for r in results {
-                            println!("{}", r.display(&output));
-                        }
+                    let results = store.searcher.fuzzy(&term, num);
+                    for r in results {
+                        println!("{}", r.display(&output));
+                    }
                     //match output {
- //                       OutputType::Short => {
- //                           for r in results {
- //                               println!("{:?} | {}", r.id, r.subject);
- //                           }
- //                       }
- //                       OutputType::Full => {
- //                           println!("{:?}", results);
- //                       }
- //                       OutputType::Raw => {
- //                           let mut out = io::stdout();
- //                           for result in results {
- //                               out.write_all(result.original.as_ref()).unwrap();
- //                           }
- //                       }
- //                       OutputType::Html => {
- //                           for m in results {
- //                               println!(
- //                                   "{}",
- //                                   m.body
- //                                       .iter()
- //                                       .filter(|x| x.mime == Mime::Html)
- //                                       .collect::<Vec<&Body>>()
- //                                       .first()
- //                                       .map(|b| b.value.clone())
- //                                       .unwrap_or_else(|| "No body".to_string())
- //                               );
- //                           }
- //                       }
- //                   }
+                    //                       OutputType::Short => {
+                    //                           for r in results {
+                    //                               println!("{:?} | {}", r.id, r.subject);
+                    //                           }
+                    //                       }
+                    //                       OutputType::Full => {
+                    //                           println!("{:?}", results);
+                    //                       }
+                    //                       OutputType::Raw => {
+                    //                           let mut out = io::stdout();
+                    //                           for result in results {
+                    //                               out.write_all(result.original.as_ref()).unwrap();
+                    //                           }
+                    //                       }
+                    //                       OutputType::Html => {
+                    //                           for m in results {
+                    //                               println!(
+                    //                                   "{}",
+                    //                                   m.body
+                    //                                       .iter()
+                    //                                       .filter(|x| x.mime == Mime::Html)
+                    //                                       .collect::<Vec<&Body>>()
+                    //                                       .first()
+                    //                                       .map(|b| b.value.clone())
+                    //                                       .unwrap_or_else(|| "No body".to_string())
+                    //                               );
+                    //                           }
+                    //                       }
+                    //                   }
                 }
                 Err(e) => error!("{}", e),
             }
@@ -119,15 +112,10 @@ async fn main() {
         }
 
         Command::Get { id, output } => {
-            let message_store = MessageStoreBuilder::new()
-                .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path))
-                .read_only()
-                .build();
 
             match message_store {
                 Ok(store) => {
-                    let result = store.get_message(id);
+                    let result = store.kv.get_message(&id);
                     match result {
                         Ok(Some(good_msg)) => println!("{}", good_msg.display(&output)),
                         Ok(None) => error!("Message not found"),
@@ -140,14 +128,14 @@ async fn main() {
         Command::Interactive {} => {
             //terminal::start(index_dir_path).unwrap();
         }
-        Command::Latest { num: _num, skip, output } => {
-            let message_store = MessageStoreBuilder::new()
-                .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path))
-                .build();
+        Command::Latest {
+            num: _num,
+            skip,
+            output,
+        } => {
             match message_store {
                 Ok(store) => {
-                    let page = store.get_messages_page(skip, _num);
+                    let page = store.kv.get_messages(skip, _num);
                     match page {
                         Ok(msgs) => {
                             for m in msgs {
@@ -161,14 +149,10 @@ async fn main() {
             }
         }
         Command::Tag { id, tags } => {
-            let message_store = MessageStoreBuilder::new()
-                .storage(Storages::Tantivy(index_dir_path.clone()))
-                .searcher(Searchers::Tantivy(index_dir_path))
-                .build();
             match message_store {
                 Ok(mut store) => {
                     if let Err(e) =
-                        store.tag_message_id(id, tags.into_iter().collect::<HashSet<String>>())
+                        store.kv.tag_message_id(&id, tags.into_iter().collect::<HashSet<String>>())
                     {
                         error!("{}", e)
                     }

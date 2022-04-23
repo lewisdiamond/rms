@@ -1,46 +1,51 @@
+cargo-features = ["edition2021"]
 [package]
 name = "rms"
 version = "0.1.0"
-authors = ["Lewis Diamond <me@lewisdiamond.com>"]
+authors = ["Lewis Diamond <rms@lewisdiamond.com>"]
 edition = "2018"
+resolver = "2"
 
 [workspace]
 members = ["termui"]
 
 [dependencies]
 #maildir = { git = "https://github.com/lewisdiamond/maildir.git" }
-maildir = { path = "/home/ldiamond/dev/maildir/" }
+maildir_ext = { package = "maildir", path = "/home/ldiamond/dev/maildir/" }
 #maildir = "0.4.2"
-html2text = "0.2.1"
+html2text = "0.3.1"
 #html2text = { git = "https://github.com/lewisdiamond/rust-html2text.git"}
 #mailparse = "0.13.0"
 mailparse = { path = "/home/ldiamond/dev/mailparse/" }
-rayon = "1.5.0"
-tantivy = "0.14"
+rayon = "1.5.2"
+tantivy = "0.17.0"
 tempdir = "0.3.7"
-serde_json = "1.0.61"
-serde = { version = "1.0.118", features = ["derive"] }
-structopt = "0.3.21"
+serde_json = "1.0.79"
+serde = { version = "1.0.136", features = ["derive"] }
+structopt = "0.3.26"
 shellexpand = "2.1.0"
-log = { version = "0.4.11", features = ["max_level_debug", "release_max_level_warn"] } 
+log = { version = "0.4.16", features = ["max_level_debug", "release_max_level_warn"] } 
 pretty_env_logger = "0.4.0"
-pbr = "1.0.3"
-num_cpus = "1.13.0"
-sys-info = "0.7.0"
-tui = "0.13.0"
-termion = "1.5.5"
+pbr = "1.0.4"
+num_cpus = "1.13.1"
+sys-info = "0.9.1"
+tui = "0.17.0"
+termion = "1.5.6"
 chrono = "0.4.19"
-sha2 = "0.9.2"
-html5ever = "0.25.1"
-rocksdb = "0.15.0"
+sha2 = "0.10.2"
+html5ever = "0.26.0"
 jemallocator = "0.3.2"
 select = "0.5.0"
-futures = "0.3.8"
-tokio = { version = "1.4.0", features = ["full"] }
-async-trait = "0.1.42"
-kv = {version = "0.22.0", features = ["json-value"] }
-derive_builder = "0.9.0"
-delegate = "0.5.1"
+futures = "0.3.21"
+tokio = { version = "1.17.0", features = ["full"] }
+async-trait = "0.1.53"
+kv = { version = "0.23.1", features = ["json-value"] }
+derive_builder = "0.11.2"
+delegate = "0.6.2"
+tokio-stream = "0.1.8"
+async-stream = "0.3.3"
+itertools = "0.10.3"
 
 [dev-dependencies]
-rand = "0.8.0"
+rand = "0.8.5"
+

@@ -1,3 +1,4 @@
+pub mod maildir;
 use crate::readmail;
 use crate::readmail::html2text;
 use chrono::prelude::*;
@@ -154,6 +155,7 @@ self.get_body(None).as_text(), self.id
     }
 }
 
+#[derive(Debug)]
 pub struct MessageError {
     pub message: String,
 }
@@ -221,10 +223,10 @@ impl Message {
         Self::from_parsedmail(&parsed_mail)
     }
     pub fn from_mailentry(mut mailentry: MailEntry) -> Result<Self, MessageError> {
-        match mailentry.parsed() {
+        match mailentry.0.parsed() {
             Ok(parsed) => Self::from_parsedmail(&parsed),
             Err(_) => Err(MessageError {
-                message: format!("Failed to parse email id {}", mailentry.id()),
+                message: format!("Failed to parse email id {}", mailentry.0.id()),
             }),
         }
     }

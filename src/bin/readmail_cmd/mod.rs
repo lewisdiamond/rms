@@ -13,7 +13,7 @@ fn expand_path(input_str: &str) -> PathBuf {
 pub fn source() -> Box<dyn BufRead> {
     let matches = App::new("Read Mail")
         .version("0.0.1")
-        .author("Lewis Diamond <rms@lewisdiamond.com")
+        .author("Lewis Diamond <rms@lewisdiamond.com>")
         .about("Read your emails like a champ!")
         .args(&[Arg::from_usage(
             "[input] 'Read from a file, or stdin if omitted'",

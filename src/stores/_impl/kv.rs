@@ -49,8 +49,8 @@ impl<'a> crate::stores::Store for Kv<'a> {
 }
 
 impl<'a> crate::stores::kv::Kv for Kv<'a> {
-    fn get_message(&self, id: &str) -> Result<Message, MessageStoreError> {
-        let json_m = self
+    fn get_message(&self, id: &str) -> Result<Option<Message>, MessageStoreError> {
+        let msg = self
             .msg_by_id
             .get(id)
             .map_err(|e| {
@@ -58,9 +58,8 @@ impl<'a> crate::stores::kv::Kv for Kv<'a> {
                     "Unable to get message from KV store: {}",
                     e
                 ))
-            })?
-            .unwrap();
-        Ok(json_m.0)
+            })?.map(|json_m| json_m.0);
+        Ok(msg)
     }
 
     fn get_messages(
@@ -71,13 +70,18 @@ impl<'a> crate::stores::kv::Kv for Kv<'a> {
         self.msg_by_id.iter().count();
         Ok(vec![])
     }
-}
 
-impl<'a> crate::stores::tag::Tagger for Kv<'a> {
+    fn tag_message_id(
+        &mut self,
+        id: &str,
+        tags: std::collections::HashSet<String>,
+    ) -> Result<(), MessageStoreError> {
+        todo!()
+    }
     fn tag_message(
         &mut self,
-        tags: std::collections::HashSet<String>,
         msg: Message,
+        tags: std::collections::HashSet<String>,
     ) -> Result<Message, MessageStoreError> {
         todo!()
     }
@@ -89,6 +93,20 @@ impl<'a> crate::stores::tag::Tagger for Kv<'a> {
     fn get_messages_by_tag(&self, tag: String) -> Result<Vec<Message>, MessageStoreError> {
         todo!()
     }
+
+    fn add_messages(&mut self, msgs: Vec<Message>) {
+        let batch = Batch::<String, Json<Message>>::new(); 
+        batch.set
+        self.msg_by_id
+            .set(msg.id.clone(), Json(msg.clone()))
+            .map(|_| msg)
+            .map_err(|e| {
+                MessageStoreError::CouldNotAddMessage(format!(
+                    "Unable to add the message to the KV store: {}",
+                    e
+                ))
+            })
+    }
 }
 
 #[cfg(test)]
@@ -96,9 +114,8 @@ mod test {
     use std::collections::HashSet;
     use std::time::Instant;
     use crate::stores::Store;
-    use crate::stores::kv::Kv;
+    use super::Kv;
 
-    use super::*;
     use crate::message::{Body, Message, Mime};
     use rand::{distributions::Alphanumeric, thread_rng, Rng};
 
@@ -110,7 +127,7 @@ mod test {
             .collect()
     }
 
-    fn get_store<'a>() -> Kv<'a> {
+    fn get_store() -> Kv<'static> {
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(5)
@@ -119,7 +136,7 @@ mod test {
         let mut path = std::path::PathBuf::new();
         path.push("./test_db/");
         path.push(rand_string);
-        let newdb = Kv::new(&path).ok().unwrap();
+        let newdb = Kv::new(path).ok().unwrap();
         newdb
     }
 
@@ -161,7 +178,7 @@ mod test {
         };
         store.add_message(message.clone()).ok().unwrap();
 
-        if let Ok(retrieved) = store.get_message("some_id") {
+        if let Ok(Some(retrieved)) = store.get_message("some_id") {
             assert_eq!(message, retrieved);
         } else {
             panic!("Failed to retrieve the message")
@@ -189,7 +206,7 @@ mod test {
         };
         store.add_message(message.clone()).unwrap();
 
-        if let Ok(retrieved) = store.get_message("some_id") {
+        if let Ok(Some(retrieved)) = store.get_message("some_id") {
             assert_eq!(message, retrieved);
         } else {
             panic!("Failed to retrieve the message")
@@ -220,7 +237,7 @@ mod test {
         };
         store.add_message(message.clone()).unwrap();
 
-        if let Ok(retrieved) = store.get_message("some_id") {
+        if let Ok(Some(retrieved)) = store.get_message("some_id") {
             assert_eq!(message, retrieved);
         } else {
             panic!("Failed to retrieve the message")

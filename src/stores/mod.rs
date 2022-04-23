@@ -1,15 +1,13 @@
-use async_trait::async_trait;
 use crate::message::Message;
 
-use std::path::PathBuf;
 use std::fmt;
 
-pub mod message_store;
-pub mod kv;
-pub mod search;
 pub mod _impl;
-pub mod tag;
+pub mod kv;
+pub mod message_store;
+pub mod search;
 
+#[derive(Debug)]
 pub enum MessageStoreError {
     MessageNotFound(String),
     CouldNotAddMessage(String),
@@ -19,6 +17,9 @@ pub enum MessageStoreError {
     CouldNotGetMessage(String),
     CouldNotGetMessages(Vec<String>),
     CouldNotConvertMessage(String),
+    CouldNotCreateKvError(String),
+    CouldNotCreateSearcherError(String),
+    FailedToMoveParsedMailEntry(std::io::Error),
     InvalidQuery(String),
 }
 
@@ -44,12 +45,21 @@ impl fmt::Display for MessageStoreError {
             MessageStoreError::InvalidQuery(s) => format!("Could query message {}", s),
             MessageStoreError::CouldNotConvertMessage(s) => {
                 format!("Could not convert message {}", s)
-            },
-            MessageStoreError::CouldNotDeleteMessage(s) => format!("Could not delete message {}", s)
+            }
+            MessageStoreError::CouldNotDeleteMessage(s) => {
+                format!("Could not delete message {}", s)
+            }
 
+            MessageStoreError::CouldNotCreateKvError(_) => {
+                format!("Could not create the KV store")
+            }
+            MessageStoreError::CouldNotCreateSearcherError(_) => {
+                format!("Could not create the Search store")
+            }
+            MessageStoreError::FailedToMoveParsedMailEntry(_) => {
+                format!("Could not move parsed mail entry")
+            }
         };
         write!(f, "Message Store Error {}", msg)
     }
 }
-
-

@@ -1,7 +1,6 @@
 use crate::message::{Message, MessageError};
-use crate::stores::kv::Kv;
-use crate::stores::{MessageStoreError, Store};
 use crate::stores::search::Searcher;
+use crate::stores::{MessageStoreError, Store};
 use log::{error, info};
 use std::cmp;
 use std::collections::HashSet;
@@ -99,18 +98,14 @@ pub struct TantivyStore {
     index: tantivy::Index,
     reader: tantivy::IndexReader,
     writer: Option<tantivy::IndexWriter>,
-    threads: Option<usize>,
-    mem_per_thread: Option<usize>,
 }
+
 impl Store for TantivyStore {
-    fn add_message(
-        &mut self,
-        msg: Message,
-    ) -> Result<Message, MessageStoreError> {
+    fn add_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
         self._add_message(msg)
     }
     fn delete_message(&mut self, _msg: &Message) -> Result<(), MessageStoreError> {
-        Ok(())
+        unimplemented!();
     }
     fn update_message(&mut self, _msg: Message) -> Result<Message, MessageStoreError> {
         unimplemented!();
@@ -131,37 +126,23 @@ impl Searcher for TantivyStore {
 
     fn search_by_date(
         &self,
-        start: chrono::DateTime<chrono::Utc>,
-        end: chrono::DateTime<chrono::Utc>,
+        _start: chrono::DateTime<chrono::Utc>,
+        _end: chrono::DateTime<chrono::Utc>,
     ) -> Result<Vec<Message>, MessageStoreError> {
         todo!()
     }
 
-    fn index(
-        &mut self,
-        size_hint: usize,
-    ) -> Result<(), MessageStoreError> {
-        todo!()
+    fn start_index(&mut self, size_hint: usize) -> Result<(), MessageStoreError> {
+        self.start_indexing_process(size_hint)
+    }
+
+    fn finish_index (&mut self) -> Result<(), MessageStoreError> {
+        self.finish_indexing_process()
     }
 }
 
-impl Kv for TantivyStore {
-    fn get_message(&self, id: &str) -> Result<Message, MessageStoreError> {
-        self._get_message(id.as_ref()).ok_or_else(|| MessageStoreError::CouldNotGetMessage(format!("Message not found: {}", id)))
-    }
-    fn get_messages(
-        &self,
-        start: usize,
-        num: usize,
-    ) -> Result<Vec<Message>, MessageStoreError> {
-        self._latest(num, Some(start))
-    }
-}
 impl TantivyStore {
     pub fn new(path: PathBuf) -> Self {
-        Self::_new(path, false)
-    }
-    fn _new(path: PathBuf, _ro: bool) -> Self {
         let email = EmailSchema::default();
         let index = TantivyStore::open_or_create_index(path, email.schema.clone());
         let reader = index
@@ -172,12 +153,7 @@ impl TantivyStore {
             reader,
             writer: None,
             email,
-            threads: None,
-            mem_per_thread: None,
         }
-    }
-    pub fn _new_ro(path: PathBuf) -> Self {
-        Self::_new(path, true)
     }
 
     fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError> {
@@ -217,10 +193,7 @@ impl TantivyStore {
         TantivyStore::open_or_create(path, schema)
     }
 
-    fn _add_message(
-        &mut self,
-        msg: Message,
-    ) -> Result<Message, MessageStoreError> {
+    fn _add_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
         let writer = &mut self.writer;
         match writer {
             Some(indexer) => {
@@ -278,33 +251,24 @@ impl TantivyStore {
         &self,
         num_emails: usize,
     ) -> Result<tantivy::IndexWriter, MessageStoreError> {
-        let num_cpu = match self.threads {
-            Some(threads) => threads,
-            None => cmp::min(
-                (num_cpus::get() as f32 / 1.5).floor() as usize,
-                cmp::max(1, (0.0818598 * (num_emails as f32).powf(0.311549)) as usize),
-            ),
-        };
-        let mem_per_thread = match self.mem_per_thread {
-            Some(mem) => mem * BYTES_IN_MB,
-            None => {
-                (if let Ok(mem_info) = sys_info::mem_info() {
-                    cmp::min(
-                        cmp::min(
-                            mem_info.avail as usize * 1024 / (num_cpu + 1),
-                            cmp::max(
-                                (0.41268337 * (num_emails as f32).powf(0.672702)) as usize
-                                    * BYTES_IN_MB,
-                                200 * BYTES_IN_MB,
-                            ),
-                        ),
-                        2000 * BYTES_IN_MB,
-                    )
-                } else {
-                    400 * BYTES_IN_MB
-                }) as usize
-            }
-        };
+        let num_cpu = cmp::min(
+            (num_cpus::get() as f32 / 1.5).floor() as usize,
+            cmp::max(1, (0.0818598 * (num_emails as f32).powf(0.311549)) as usize),
+        );
+        let mem_per_thread = (if let Ok(mem_info) = sys_info::mem_info() {
+            cmp::min(
+                cmp::min(
+                    mem_info.avail as usize * 1024 / (num_cpu + 1),
+                    cmp::max(
+                        (0.41268337 * (num_emails as f32).powf(0.672702)) as usize * BYTES_IN_MB,
+                        200 * BYTES_IN_MB,
+                    ),
+                ),
+                2000 * BYTES_IN_MB,
+            )
+        } else {
+            400 * BYTES_IN_MB
+        }) as usize;
         info!(
             "We're using {} threads with {}mb memory per thread",
             num_cpu,

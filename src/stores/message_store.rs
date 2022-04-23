@@ -1,79 +1,39 @@
+use crate::message::maildir::{handle_messages, mailentry_iterator, parse_message, MaildirError};
 use crate::message::Message;
 use crate::stores::MessageStoreError;
-use async_trait::async_trait;
-use chrono::{DateTime, Utc};
-use delegate::delegate;
-use maildir::{MailEntry, Maildir};
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::rc::Rc;
-use tokio::sync::mpsc;
-use crate::stores::_impl::tantivy::TantivyStore;
 use crate::stores::_impl::kv;
+use crate::stores::_impl::tantivy::TantivyStore;
+use maildir_ext::{MailEntry, Maildir};
+use rayon::prelude::*;
+
+use itertools::Itertools;
+
+use std::path::PathBuf;
+use std::sync::mpsc;
+use std::{process, thread};
 
 use super::kv::Kv;
 use super::search::Searcher;
-use super::tag::Tagger;
 use super::Store;
 
-
-pub struct MessageStore {
-    pub searcher: Box<Rc<dyn Searcher>>,
-    pub storage: Box<Rc<dyn Kv>>,
-    pub tagger: Box<Rc<dyn Tagger>>,
+pub struct MessageStore<S, K>
+where
+    S: Searcher,
+    K: Kv,
+{
+    pub searcher: S,
+    pub kv: K,
 }
 
-
-pub enum MessageStoreBuilderError {
-    CouldNotCreateStoreError(String),
-    CouldNotCreateSearcherError(String),
-}
-
-impl Searcher for MessageStore {
-    delegate! {
-        to self.searcher {
-            fn search_fuzzy(&self, query: String, num: usize) -> Result<Vec<Message>, MessageStoreError>;
-            fn search_by_date(
-                &self,
-                _start: DateTime<Utc>,
-                _end: DateTime<Utc>,
-            ) -> Result<Vec<Message>, MessageStoreError> ;
-            fn latest(&mut self, num: usize) -> Result<Vec<Message>, MessageStoreError>;
-            fn index(
-                &mut self,
-                size_hint: usize,
-            ) -> Result<(), MessageStoreError>;
-        }
-    }
-}
-
-impl Kv for MessageStore {
-    delegate! {
-        to self.storage {
-            fn get_message(&self, id: &str) -> Result<Message, MessageStoreError>;
-            fn get_messages(&self, start: usize, num: usize) -> Result<Vec<Message>, MessageStoreError>;
-        }
-    }
-}
-
-impl Tagger for MessageStore {
-    delegate! {
-        to self.tagger {
-            fn tag_message(
-                &mut self,
-                tags: HashSet<String>,
-                msg: Message,
-            ) -> Result<Message, MessageStoreError>;
-
-            fn list_tags(&self) -> Result<HashSet<String>, MessageStoreError>;
-            fn get_messages_by_tag(&self, tag: String) -> Result<Vec<Message>, MessageStoreError>;
-        }
-    }
-}
-
-impl Store for MessageStore {
+impl<S, K> Store for MessageStore<S, K>
+where
+    S: Searcher,
+    K: Kv,
+{
     fn add_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
-        self.searcher.add_message(msg)
+        println!("Adding message");
+        self.searcher.add_message(msg.clone())?; //TODO remove clone
+        self.kv.add_message(msg)
     }
 
     fn update_message(&mut self, m: Message) -> Result<Message, MessageStoreError> {
@@ -85,89 +45,79 @@ impl Store for MessageStore {
     }
 }
 
-impl MessageStore {
-
-    fn new(path: PathBuf) -> Self {
+impl MessageStore<TantivyStore, kv::Kv<'_>> {
+    pub fn new(path: PathBuf) -> Result<Self, MessageStoreError> {
         let tantivy_path = path.join("index/");
         let kv_path = path.join("store/");
-        let tantivy: Box<Rc<dyn Searcher>> = Box::new(Rc::new(TantivyStore::new(tantivy_path)));
-        let kv: Box<Rc<kv::Kv>> = Box::new(Rc::new(kv::Kv::new(kv_path).unwrap()));
-        MessageStore {
+        let tantivy = TantivyStore::new(tantivy_path);
+        let kv = kv::Kv::new(kv_path).map_err(|_| {
+            MessageStoreError::CouldNotCreateKvError("Couldn't create kv".to_string())
+        })?;
+        Ok(MessageStore {
             searcher: tantivy,
-            storage: kv,
-            tagger: kv
-        }
+            kv,
+        })
     }
-    async fn add_maildir(&mut self, path: PathBuf, all: bool) -> Result<usize, MessageStoreError> {
+    pub async fn add_maildir(
+        &mut self,
+        path: PathBuf,
+        all: bool,
+    ) -> Result<usize, MessageStoreError> {
         self.index_mails(path, all).await
-    }
-    fn mail_iterator(
-        source: &Maildir,
-        full: bool,
-    ) -> impl Iterator<Item = Result<MailEntry, std::io::Error>> {
-        let it = source.list_new();
-        let cur = if full { Some(source.list_cur()) } else { None };
-        it.chain(cur.into_iter().flatten())
     }
     fn maildir(&mut self, path: PathBuf) -> Result<Maildir, ()> {
         Ok(Maildir::from(path))
     }
 
     fn start_indexing_process(&mut self, num: usize) -> Result<(), MessageStoreError> {
-        //self.searcher.start_indexing_process(num)
+        self.searcher.start_index(num)?;
         Ok(())
     }
 
     fn finish_indexing_process(&mut self) -> Result<(), MessageStoreError> {
-        //self.searcher.finish_indexing_process()
-        Ok(())
+        self.searcher.finish_index()
     }
 
+    fn do_index_stupid(&mut self, maildir: Maildir, full: bool 
+    ) -> Result<usize, MessageStoreError> {
 
-    fn parse_message(mail: MailEntry) -> Result<Message, MessageStoreError> {
-        let message = Message::from_mailentry(mail);
-        message.map_err(|_| {
-            MessageStoreError::CouldNotAddMessage("Failed to parse email".to_string())
-        })
+        let iter = mailentry_iterator(&maildir, full).filter_map(|x| x.map(parse_message)).chunks(100).into_iter().map(|x| {
+            x.for_each(|m|{ self.searcher.add_message(m);});
+            self.kv.add_messages(x.collect_vec());
+        });
+        Ok(1)
     }
     async fn do_index_mails(
         &mut self,
         maildir: Maildir,
         full: bool,
     ) -> Result<usize, MessageStoreError> {
-        let mails: Vec<Result<MailEntry, _>> = Self::mail_iterator(&maildir, full).collect();
-        let count = mails.len();
-        self.start_indexing_process(count)?;
-        let (tx, mut rx) = mpsc::channel(100);
-        let handles = mails
-            .into_iter()
-            .map(|m| {
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    if let Ok(entry) = m {
-                        if let Ok(msg) = MessageStore::parse_message(entry) {
-                            tx.send(msg).await.unwrap();
-                        };
+        self.start_indexing_process(100)?;
+
+                let (tx, rx) = mpsc::channel();
+        let iter = mailentry_iterator(&maildir, full);
+        let handle = thread::spawn(|| {
+            iter.par_bridge().for_each_with(tx, |tx, m| {
+                m.map(parse_message).and_then(|x| Ok(tx.send(x))).ok();
+            });
+        });
+        while let Ok(x) = rx.recv() {
+            if let Ok((msg, new)) = x {
+                let id = msg.id.clone();
+                    self.add_message(msg)?;
+                    if new {
+                        maildir
+                            .move_new_to_cur(&id)
+                            .map_err(|e| MessageStoreError::FailedToMoveParsedMailEntry(e));
                     }
-                })
-            })
-            .collect::<Vec<tokio::task::JoinHandle<_>>>();
-        drop(tx);
-        while let Some(msg) = rx.recv().await {
-            let id = msg.id.clone();
-            self.add_message(msg)?;
-            maildir.move_new_to_cur(&id).map_err(|_| {
-                MessageStoreError::CouldNotModifyMessage(format!(
-                    "Message couldn't be moved {}",
-                    id
-                ))
-            }).map_err(|_| MessageStoreError::CouldNotModifyMessage("Unable to move message to cur".to_string()))?;
+                
+            } else {
+                println!("Failed to add/move message");
+            }
         }
-        for handle in handles {
-            handle.await.unwrap();
-        }
+
         self.finish_indexing_process()?;
-        Ok(count)
+        Ok(10)
     }
 
     pub async fn index_mails(
