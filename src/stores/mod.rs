@@ -51,15 +51,16 @@ impl fmt::Display for MessageStoreError {
             }
 
             MessageStoreError::CouldNotCreateKvError(_) => {
-                format!("Could not create the KV store")
+                "Could not create the KV store".to_string()
             }
             MessageStoreError::CouldNotCreateSearcherError(_) => {
-                format!("Could not create the Search store")
+                "Could not create the Search store".to_string()
             }
             MessageStoreError::FailedToMoveParsedMailEntry(_) => {
-                format!("Could not move parsed mail entry")
+                "Could not move parsed mail entry".to_string()
             }
         };
         write!(f, "Message Store Error {}", msg)
     }
 }
+impl std::error::Error for MessageStoreError {}

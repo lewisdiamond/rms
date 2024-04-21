@@ -1,16 +1,18 @@
-use crate::message::maildir::{handle_messages, mailentry_iterator, parse_message, MaildirError};
+use pbr::ProgressBar;
+use crate::message::maildir::{mailentry_iterator, parse_message};
 use crate::message::Message;
 use crate::stores::MessageStoreError;
 use crate::stores::_impl::kv;
 use crate::stores::_impl::tantivy::TantivyStore;
-use maildir_ext::{MailEntry, Maildir};
+use maildir_ext::Maildir;
 use rayon::prelude::*;
 
-use itertools::Itertools;
+
+
 
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::{process, thread};
+use std::thread;
 
 use super::kv::Kv;
 use super::search::Searcher;
@@ -31,7 +33,6 @@ where
     K: Kv,
 {
     fn add_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
-        println!("Adding message");
         self.searcher.add_message(msg.clone())?; //TODO remove clone
         self.kv.add_message(msg)
     }
@@ -78,27 +79,29 @@ impl MessageStore<TantivyStore, kv::Kv<'_>> {
         self.searcher.finish_index()
     }
 
-    fn do_index_stupid(&mut self, maildir: Maildir, full: bool 
-    ) -> Result<usize, MessageStoreError> {
+    //fn do_index_stupid(&mut self, maildir: Maildir, full: bool 
+    //) -> Result<usize, MessageStoreError> {
 
-        let iter = mailentry_iterator(&maildir, full).filter_map(|x| x.map(parse_message)).chunks(100).into_iter().map(|x| {
-            x.for_each(|m|{ self.searcher.add_message(m);});
-            self.kv.add_messages(x.collect_vec());
-        });
-        Ok(1)
-    }
+    //    let iter = mailentry_iterator(&maildir, full).filter_map(|x| Some(x.map(parse_message))).chunks(100).into_iter().map(|x| {
+    //        x.for_each(|m|{ self.searcher.add_message(m);});
+    //        self.kv.add_messages(x.collect_vec());
+    //    });
+    //    Ok(1)
+    //}
     async fn do_index_mails(
         &mut self,
         maildir: Maildir,
         full: bool,
     ) -> Result<usize, MessageStoreError> {
-        self.start_indexing_process(100)?;
+        let (iter, count) = mailentry_iterator(&maildir, full);
+        self.start_indexing_process(count)?;
 
-                let (tx, rx) = mpsc::channel();
-        let iter = mailentry_iterator(&maildir, full);
+        let (tx, rx) = mpsc::channel();
+        //let count = iter.size_hint().1.unwrap_or_default();
+        let mut pb = ProgressBar::new(count as u64);
         let handle = thread::spawn(|| {
             iter.par_bridge().for_each_with(tx, |tx, m| {
-                m.map(parse_message).and_then(|x| Ok(tx.send(x))).ok();
+                m.map(parse_message).map(|x| tx.send(x)).ok();
             });
         });
         while let Ok(x) = rx.recv() {
@@ -108,14 +111,17 @@ impl MessageStore<TantivyStore, kv::Kv<'_>> {
                     if new {
                         maildir
                             .move_new_to_cur(&id)
-                            .map_err(|e| MessageStoreError::FailedToMoveParsedMailEntry(e));
+                            .map_err(MessageStoreError::FailedToMoveParsedMailEntry)?;
                     }
                 
             } else {
                 println!("Failed to add/move message");
             }
+            pb.inc();
         }
 
+        handle.join().unwrap();
+        pb.finish_print("done");
         self.finish_indexing_process()?;
         Ok(10)
     }

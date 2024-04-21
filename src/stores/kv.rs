@@ -23,7 +23,7 @@ pub trait Kv: Store {
 
     fn list_tags(&self) -> Result<HashSet<String>, MessageStoreError>;
     fn get_messages_by_tag(&self, tag: String) -> Result<Vec<Message>, MessageStoreError>;
-    fn add_messages(&mut self, Vec<Message>);
+    fn add_messages(&mut self, msgs: Vec<Message>);
 }
 
 pub fn default_kv<'a>(path: PathBuf) -> Result<super::_impl::kv::Kv<'a>, kv::Error> {

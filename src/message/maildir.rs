@@ -17,17 +17,20 @@ pub enum MaildirError {
 pub fn mailentry_iterator(
     source: &Maildir,
     full: bool,
-) -> impl Iterator<Item = Result<MailEntry, MaildirError>> {
+) -> (impl Iterator<Item = Result<MailEntry, MaildirError>>, usize) {
+    let mut count = source.count_new();
     let it = source.list_new().map(|m| (m, true));
     let cur = if full {
+        count += source.count_cur();
         Some(source.list_cur().map(|m| (m, false)))
     } else {
         None
     };
-    it.chain(cur.into_iter().flatten()).map(|(m, new)| {
+    (it.chain(cur.into_iter().flatten()).map(|(m, new)| {
         m.map_err(|e| MaildirError::FailedToReadMailEntry("Failed to read maildir".to_string(), e))
             .map(|s| MailEntry(s, new))
-    })
+    }), count)
+
 }
 
 
@@ -35,7 +38,7 @@ fn mailentry_stream(
     source: &Maildir,
     full: bool,
 ) -> impl Stream<Item = Result<MailEntry, MaildirError>> {
-    let mut it = mailentry_iterator(source, full);
+    let mut it = mailentry_iterator(source, full).0;
     stream! {
         while let Some(msg) = it.next() {
             yield msg;

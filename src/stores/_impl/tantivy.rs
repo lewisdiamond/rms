@@ -33,7 +33,7 @@ impl TantivyFrom<TantivyMessage> for TantivyMessage {
         let _tags: HashSet<String> = doc
             .get_all(schema.tag)
             .into_iter()
-            .filter_map(|s| s.text())
+            .filter_map(|s| s.as_text())
             .map(String::from)
             .collect();
         TantivyMessage::from_data(

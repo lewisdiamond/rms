@@ -6,7 +6,6 @@ use crate::message::Message;
 use crate::stores::MessageStoreError;
 
 pub struct Kv<'a> {
-    store: Store,
     msg_by_id: Bucket<'a, String, Json<Message>>,
 }
 
@@ -15,13 +14,13 @@ impl<'a> Kv<'a> {
         let cfg = Config::new(path);
         let store = Store::new(cfg)?;
         let msg_by_id = store.bucket::<String, Json<Message>>(Some("by_id"))?;
-        Ok(Kv { store, msg_by_id })
+        Ok(Kv { msg_by_id })
     }
 }
 impl<'a> crate::stores::Store for Kv<'a> {
     fn add_message(&mut self, msg: Message) -> Result<Message, MessageStoreError> {
         self.msg_by_id
-            .set(msg.id.clone(), Json(msg.clone()))
+            .set(&msg.id, &Json(msg.clone()))
             .map(|_| msg)
             .map_err(|e| {
                 MessageStoreError::CouldNotAddMessage(format!(
@@ -32,7 +31,7 @@ impl<'a> crate::stores::Store for Kv<'a> {
     }
 
     fn delete_message(&mut self, msg: &Message) -> Result<(), crate::stores::MessageStoreError> {
-        self.msg_by_id.remove(msg.id.clone()).map_err(|e| {
+        self.msg_by_id.remove(&msg.id).map_err(|e| {
             MessageStoreError::CouldNotDeleteMessage(format!(
                 "Unable to delete the message to the KV store: {}",
                 e
@@ -49,10 +48,11 @@ impl<'a> crate::stores::Store for Kv<'a> {
 }
 
 impl<'a> crate::stores::kv::Kv for Kv<'a> {
+
     fn get_message(&self, id: &str) -> Result<Option<Message>, MessageStoreError> {
         let msg = self
             .msg_by_id
-            .get(id)
+            .get(&String::from(id))
             .map_err(|e| {
                 MessageStoreError::CouldNotGetMessage(format!(
                     "Unable to get message from KV store: {}",
@@ -67,8 +67,22 @@ impl<'a> crate::stores::kv::Kv for Kv<'a> {
         start: usize,
         num: usize,
     ) -> Result<Vec<Message>, crate::stores::MessageStoreError> {
-        self.msg_by_id.iter().count();
-        Ok(vec![])
+        let result: Result<Vec<Message>, crate::stores::MessageStoreError> = self.msg_by_id
+            .iter()
+            .skip(start)
+            .take(num)
+            .map(|x| {
+                match x {
+                    Ok(v) => {
+                        v.value()
+                            .map(|v: Json<Message>| v.0)
+                            .map_err(|e| crate::stores::MessageStoreError::CouldNotGetMessage(format!("Unable to read kv value: {}", e)))
+                    },
+                    Err(e) => Err(crate::stores::MessageStoreError::CouldNotGetMessage(format!("Unable to read message due to {}", e)))
+                }
+            })
+            .collect();
+            result
     }
 
     fn tag_message_id(
@@ -96,16 +110,17 @@ impl<'a> crate::stores::kv::Kv for Kv<'a> {
 
     fn add_messages(&mut self, msgs: Vec<Message>) {
         let batch = Batch::<String, Json<Message>>::new(); 
-        batch.set
+        msgs.iter().for_each(|msg| {
         self.msg_by_id
-            .set(msg.id.clone(), Json(msg.clone()))
+            .set(&(msg.id), &Json(msg.clone()))
             .map(|_| msg)
             .map_err(|e| {
                 MessageStoreError::CouldNotAddMessage(format!(
                     "Unable to add the message to the KV store: {}",
                     e
                 ))
-            })
+            });
+        });
     }
 }
 
@@ -127,7 +142,7 @@ mod test {
             .collect()
     }
 
-    fn get_store() -> Kv<'static> {
+    fn get_store() -> crate::stores::kv::Kv<'static> {
         let rand_string: String = thread_rng()
             .sample_iter(&Alphanumeric)
             .take(5)

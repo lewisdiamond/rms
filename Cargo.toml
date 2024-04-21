@@ -1,9 +1,8 @@
-cargo-features = ["edition2021"]
 [package]
 name = "rms"
 version = "0.1.0"
 authors = ["Lewis Diamond <rms@lewisdiamond.com>"]
-edition = "2018"
+edition = "2021"
 resolver = "2"
 
 [workspace]

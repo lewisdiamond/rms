@@ -4,7 +4,6 @@ use rms::readmail::display::DisplayAs;
 use rms::stores::kv::Kv;
 use rms::stores::message_store::MessageStore;
 use std::collections::HashSet;
-use tokio;
 
 #[tokio::main]
 async fn main() {
@@ -18,7 +17,7 @@ async fn main() {
         Command::Index {
             maildir_path,
             full,
-            debug,
+            debug: _,
         } => {
             info!("Indexing {:?}", maildir_path);
             if full {
