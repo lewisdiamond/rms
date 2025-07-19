@@ -58,7 +58,7 @@ pub fn extract_body(msg: &ParsedMail, prefer_html: bool) -> Vec<Body> {
             "No body for message: {}",
             msg.headers
                 .iter()
-                .map(|x| format!("{}:{}", x.get_key(), x.get_value()))
+                .map(|x| format!("{}:{}", x.get_key().unwrap_or_default(), x.get_value().unwrap_or_default()))
                 .collect::<Vec<String>>()
                 .join("\n")
         );

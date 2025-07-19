@@ -169,9 +169,9 @@ impl MessageError {
 }
 
 impl Message {
-    pub fn from_parsedmail(msg: &ParsedMail) -> Result<Self, MessageError> {
-        let id = get_id(msg.data);
-        let original = Vec::from(msg.data);
+    pub fn from_parsedmail(msg: &ParsedMail, original_data: &[u8]) -> Result<Self, MessageError> {
+        let id = get_id(original_data);
+        let original = Vec::from(original_data);
         let headers = &msg.headers;
         let mut subject: String = "".to_string();
         let mut from: String = "".to_string();
@@ -179,16 +179,16 @@ impl Message {
         let default_date = 0;
         let mut date = default_date;
         for h in headers {
-            let key = h.get_key();
+            let key = h.get_key().unwrap_or_default();
             match key.as_ref() {
-                "Subject" => subject = h.get_value(),
-                "From" => from = h.get_value(),
-                "To" => recipients.push(h.get_value()),
-                "cc" => recipients.push(h.get_value()),
-                "bcc" => recipients.push(h.get_value()),
+                "Subject" => subject = h.get_value().unwrap_or_default(),
+                "From" => from = h.get_value().unwrap_or_default(),
+                "To" => recipients.push(h.get_value().unwrap_or_default()),
+                "cc" => recipients.push(h.get_value().unwrap_or_default()),
+                "bcc" => recipients.push(h.get_value().unwrap_or_default()),
                 "Received" | "Date" => {
                     if date == default_date {
-                        let date_str = h.get_value();
+                        let date_str = h.get_value().unwrap_or_default();
                         let date_str = date_str
                             .rsplit(';')
                             .collect::<Vec<&str>>()
@@ -220,13 +220,21 @@ impl Message {
         let parsed_mail = parse_mail(data.as_slice()).map_err(|_| MessageError {
             message: String::from("Unable to parse email data"),
         })?;
-        Self::from_parsedmail(&parsed_mail)
+        Self::from_parsedmail(&parsed_mail, data.as_slice())
     }
     pub fn from_mailentry(mut mailentry: MailEntry) -> Result<Self, MessageError> {
+        // Get the ID first before borrowing
+        let entry_id = mailentry.0.id().to_string();
+        
         match mailentry.0.parsed() {
-            Ok(parsed) => Self::from_parsedmail(&parsed),
+            Ok(parsed) => {
+                // Temporary workaround: create a placeholder for raw data
+                // TODO: Find the right way to get raw email data from MailEntry
+                let placeholder_data = format!("Message-ID: {}\n", entry_id).into_bytes();
+                Self::from_parsedmail(&parsed, &placeholder_data)
+            },
             Err(_) => Err(MessageError {
-                message: format!("Failed to parse email id {}", mailentry.0.id()),
+                message: format!("Failed to parse email id {}", entry_id),
             }),
         }
     }
