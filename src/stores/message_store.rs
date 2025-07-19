@@ -4,7 +4,7 @@ use crate::message::Message;
 use crate::stores::MessageStoreError;
 use crate::stores::_impl::kv;
 use crate::stores::_impl::tantivy::TantivyStore;
-use maildir_ext::Maildir;
+use maildir::Maildir;
 use rayon::prelude::*;
 
 

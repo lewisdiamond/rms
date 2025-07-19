@@ -1,12 +1,12 @@
 use async_stream::stream;
-use maildir_ext::Maildir;
+use maildir::Maildir;
 use tokio_stream::{Stream, StreamExt};
 
 use crate::message::Message;
 
 use super::MessageError;
 
-pub struct MailEntry(pub maildir_ext::MailEntry, pub bool);
+pub struct MailEntry(pub maildir::MailEntry, pub bool);
 
 #[derive(Debug)]
 pub enum MaildirError {
