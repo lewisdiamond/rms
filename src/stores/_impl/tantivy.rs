@@ -66,7 +66,7 @@ impl Default for EmailSchema {
         let thread = schema_builder.add_text_field("thread", STRING);
         let id = schema_builder.add_text_field("id", STRING | STORED);
         let tag = schema_builder.add_text_field("tag", STRING | STORED);
-        let dateoptions = IntOptions::default()
+        let dateoptions = NumericOptions::default()
             .set_fast(Cardinality::SingleValue)
             .set_stored()
             .set_indexed();

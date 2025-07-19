@@ -9,13 +9,13 @@ resolver = "2"
 members = ["termui"]
 
 [dependencies]
-#maildir = { git = "https://github.com/lewisdiamond/maildir.git" }
-maildir_ext = { package = "maildir", path = "/home/ldiamond/dev/maildir/" }
+maildir = { git = "https://github.com/lewisdiamond/maildir.git" }
+#maildir_ext = { package = "maildir", path = "/home/ldiamond/dev/maildir/" }
 #maildir = "0.4.2"
 html2text = "0.3.1"
 #html2text = { git = "https://github.com/lewisdiamond/rust-html2text.git"}
-#mailparse = "0.13.0"
-mailparse = { path = "/home/ldiamond/dev/mailparse/" }
+mailparse = "0.6.5"
+#mailparse = { path = "/home/ldiamond/dev/mailparse/" }
 rayon = "1.5.2"
 tantivy = "0.17.0"
 tempdir = "0.3.7"
